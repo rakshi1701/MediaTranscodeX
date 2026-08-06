@@ -86,16 +86,11 @@ The project development is structured into six 2-week sprints:
 
 | Sprint | Objective | Key Deliverables & Concepts |
 | --- | --- | --- |
-| **Sprint 1** | **Environment & Build Setup** | • Configure CMake for Qt 6 and FFmpeg (`avcodec`, `avformat`, `avutil`, `swscale`, `swresample`).<br> • Verify C++17   <br>• Set up initial folder structure. |
-
-| **Sprint 2** | **RAII Memory Management & Demuxing** | • Build custom C++ deleters for FFmpeg pointers. <br> • Implement `MediaDemuxer` class to extract container metadata.<br>• Perform Valgrind / AddressSanitizer checks for zero memory leaks. |
-
+| **Sprint 1** | **Environment & Build Setup** | • Configure CMake for Qt 6 and FFmpeg (`avcodec`, `avformat`, `avutil`, `swscale`, `swresample`).<br>• Verify C++17<br>• Set up initial folder structure. |
+| **Sprint 2** | **RAII Memory Management & Demuxing** | • Build custom C++ deleters for FFmpeg pointers.<br>• Implement `MediaDemuxer` class to extract container metadata.<br>• Perform Valgrind / AddressSanitizer checks for zero memory leaks. |
 | **Sprint 3** | **Decoding Pipeline & Frame Access** | • Build decode loop (`av_read_frame`, `avcodec_send_packet`, `avcodec_receive_frame`).<br>• Manage reference counting (`av_frame_ref` / `av_frame_unref`).<br>• Extract raw uncompressed audio/video `AVFrame` instances. |
-
 | **Sprint 4** | **Frame Scaling & Color Conversion** | • Integrate `libswscale` for color space conversion (YUV420p $\rightarrow$ RGB24).<br>• Wrap scaling contexts in RAII smart pointers.<br>• Convert video frames to `QImage` for live frontend previewing. |
-
 | **Sprint 5** | **Encoding Pipeline & Container Muxing** | • Initialize encoder contexts and target container formats.<br>• Handle timestamp rescaling (`av_rescale_q`). <br>• Write interleaved media packets to disk and handle codec flushing routines. |
-
 | **Sprint 6** | **Qt UI Integration & Threading** | • Connect engine to GUI using `QThread` and Signals/Slots. <br>• Build user interface controls (progress bars, preset dropdowns, format selection).<br>• End-to-end stress testing and leak checks. |
 
 ---
