@@ -1,4 +1,0 @@
-/home/rakshith/my_works/Media_TranscodeX/buid/CMakeFiles/Media_TranscodeX.dir
-/home/rakshith/my_works/Media_TranscodeX/buid/CMakeFiles/edit_cache.dir
-/home/rakshith/my_works/Media_TranscodeX/buid/CMakeFiles/rebuild_cache.dir
-/home/rakshith/my_works/Media_TranscodeX/buid/CMakeFiles/Media_TranscodeX_autogen.dir
