@@ -2,35 +2,60 @@
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QLabel>
+#include <QFileDialog>
 #include <QDebug>
-
-// FFmpeg is a C library, so we must wrap its includes in 'extern "C"'
-extern "C" {
-    #include <libavcodec/avcodec.h>
-    #include <libavformat/avformat.h>
-    #include <libavutil/avutil.h>
-}
+#include "MediaDemuxer.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
-    // 1. Grab the FFmpeg version to prove linking works
-    const char* ffmpegVersion = av_version_info();
-    qDebug() << "Successfully linked FFmpeg version:" << ffmpegVersion;
+    Core::MediaDemuxer demuxer;
+    bool success = false;
 
-    // 2. Create a basic Qt Window
+    // 1. Open Native File Dialog
+    QString filePath = QFileDialog::getOpenFileName(
+        nullptr,
+        "Select Test Media File",
+        "",
+        "Media Files (*.mp4 *.mkv *.avi *.mp3 *.wav *.webm);;All Files (*)"
+    );
+
+    // 2. Only attempt to open if the user actually picked a file
+    if (!filePath.isEmpty()) {
+        std::string samplePath = filePath.toStdString();
+        success = demuxer.openFile(samplePath);
+    }
+
+    // 3. Render GUI output
     QWidget window;
-    window.setWindowTitle("FFmpeg + Qt C++ Converter - Sprint 1");
-    window.resize(400, 200);
+    window.setWindowTitle("Media_TranscodeX - Sprint 2 Demuxer Test");
+    window.resize(550, 300);
 
     QVBoxLayout *layout = new QVBoxLayout(&window);
-    
-    QString labelText = QString("Welcome to Sprint 1!\nFFmpeg Version: %1").arg(ffmpegVersion);
-    QLabel *label = new QLabel(labelText, &window);
-    label->setAlignment(Qt::AlignCenter);
-    
-    layout->addWidget(label);
-    window.show();
 
+    QString statusText;
+    if (success) {
+        const auto& info = demuxer.getInfo();
+        statusText = QString("File Loaded Successfully!\n\n"
+                             "Path: %1\n"
+                             "Duration: %2 sec\n"
+                             "Resolution: %3x%4\n"
+                             "Video Codec: %5\n"
+                             "Audio Codec: %6")
+                         .arg(QString::fromStdString(info.filePath))
+                         .arg(info.durationSeconds)
+                         .arg(info.width)
+                         .arg(info.height)
+                         .arg(QString::fromStdString(info.videoCodecName))
+                         .arg(QString::fromStdString(info.audioCodecName));
+    } else {
+        statusText = QString("No file selected or failed to parse media file.");
+    }
+
+    QLabel *label = new QLabel(statusText, &window);
+    label->setAlignment(Qt::AlignCenter);
+    layout->addWidget(label);
+
+    window.show();
     return app.exec();
 }

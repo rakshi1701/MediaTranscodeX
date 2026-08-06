@@ -5,16 +5,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-# Automatically enable Qt MOC (Meta-Object Compiler), UIC, and RCC
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-# --- 1. Find Qt 6 ---
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Concurrent)
 
-# --- 2. Find FFmpeg ---
-# (Using pkg-config is standard for Linux/macOS. Windows may require manual paths)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libavcodec
@@ -24,12 +20,17 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libswresample
 )
 
-# --- 3. Define the Executable ---
+# --- Define Executable Sources ---
 add_executable(Media_TranscodeX
     src/gui/main.cpp
+    src/core/MediaDemuxer.cpp
 )
 
-# --- 4. Link Libraries ---
+# --- Target Include Directories ---
+target_include_directories(Media_TranscodeX PRIVATE
+    src/core
+)
+
 target_link_libraries(Media_TranscodeX PRIVATE
     Qt6::Core
     Qt6::Gui
