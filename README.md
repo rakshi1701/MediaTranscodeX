@@ -9,14 +9,14 @@ This project features low-level raw frame manipulation, advanced C++ Resource Ac
 
 ## 📊 Project Status & Progress Tracker
 
-* **Current Sprint:** Sprint 3 Complete ✅ | **Next Up:** Sprint 4 (Frame Scaling & Color Conversion) 🚀
+* **Current Sprint:** Sprint 4 Complete ✅ | **Next Up:** Sprint 5 (Encoding Pipeline & Container Muxing) 🚀
 
 | Sprint | Goal / Feature | Status | Key Milestones |
 | :--- | :--- | :---: | :--- |
 | **Sprint 1** | **Environment & Build Setup** | ✅ Completed | • Integrated CMake build configuration with Qt 6 & FFmpeg C libraries.<br>• Verified C++17 build targets and project directory structure.<br>• Successfully launched initial test window with FFmpeg runtime linking. |
 | **Sprint 2** | **RAII Memory Management & Demuxing** | ✅ Completed | • Implemented custom C++ RAII smart pointer deleters (`std::unique_ptr`) for `AVFormatContext`, `AVCodecContext`, `AVPacket`, and `AVFrame`.<br>• Created `MediaDemuxer` class to safely open containers and extract stream metadata.<br>• Added dynamic file selection using native Qt `QFileDialog`. |
 | **Sprint 3** | **Decoding Pipeline & Frame Access** | ✅ Completed | • Built `MediaDecoder` using `avcodec_send_packet()` and `avcodec_receive_frame()`.<br>• Implemented decoder flushing for end-of-stream leftover frames.<br>• Successfully extracted and freed raw uncompressed video `AVFrame` instances. |
-| **Sprint 4** | **Frame Scaling & Color Conversion** | ⏳ Pending | • Integrate `libswscale` for YUV420p to RGB24 conversion.<br>• Convert video frames to `QImage` for live frontend GUI previewing. |
+| **Sprint 4** | **Frame Scaling & Color Conversion** | ✅ Completed | • Integrated `libswscale` inside custom `FrameScaler` engine.<br>• Added hardware YUV to RGB24 color space pixel conversion.<br>• Rendered live video frames inside Qt GUI using `QImage` & `QPixmap`. |
 | **Sprint 5** | **Encoding Pipeline & Container Muxing** | ⏳ Pending | • Initialize encoder contexts and target container formats.<br>• Rescale media timestamps (`av_rescale_q`) and write interleaved streams to disk. |
 | **Sprint 6** | **Qt UI Integration & Threading** | ⏳ Pending | • Connect core C++ engine to Qt UI via `QThread` and Signals/Slots.<br>• Build conversion queue, progress bars, codec dropdowns, and preset settings. |
 
@@ -63,7 +63,7 @@ Media_TranscodeX/
 │   │   ├── MediaDemuxer.h/.cpp# Demuxer engine & metadata extraction
 │   │   ├── MediaDecoder.h/.cpp# Frame decoding pipeline
 │   │   ├── MediaEncoder.h/.cpp# (Sprint 5) Frame encoding pipeline
-│   │   └── FrameScaler.h/.cpp # (Sprint 4) Color space & image scaling
+│   │   └── FrameScaler.h/.cpp # Color space & image scaling
 │   ├── worker/                # Qt Threading & Orchestration (Sprint 6)
 │   │   ├── ConversionWorker.h/.cpp
 │   │   └── JobQueue.h/.cpp
@@ -71,7 +71,7 @@ Media_TranscodeX/
 │       ├── main.cpp           # Entry point and Sprint test harness
 │       ├── MainWindow.h/.cpp  # (Sprint 6) Main desktop user interface
 │       └── VideoPreviewWidget.h/.cpp
-└── tests/                     # Unit tests for core engine
+└── tests/                     # Unit tests for core engine                    # Unit tests for core engine
 
 ```
 
