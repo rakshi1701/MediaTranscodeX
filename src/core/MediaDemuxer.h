@@ -21,6 +21,10 @@ class MediaDemuxer {
 public:
     MediaDemuxer() = default;
     ~MediaDemuxer() = default;
+    
+    AVStream* getVideoStream() const;
+    AVStream* getAudioStream() const;
+    AVFormatContext* getFormatContext() const { return m_formatContext.get(); }
 
     // Prevent copying to maintain unique ownership
     MediaDemuxer(const MediaDemuxer&) = delete;

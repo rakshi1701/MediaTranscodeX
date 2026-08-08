@@ -3,6 +3,21 @@
 
 namespace Core {
 
+    
+AVStream* MediaDemuxer::getVideoStream() const {
+    if (m_formatContext && m_info.videoStreamIndex >= 0) {
+        return m_formatContext->streams[m_info.videoStreamIndex];
+    }
+    return nullptr;
+}
+
+AVStream* MediaDemuxer::getAudioStream() const {
+    if (m_formatContext && m_info.audioStreamIndex >= 0) {
+        return m_formatContext->streams[m_info.audioStreamIndex];
+    }
+    return nullptr;
+}
+
 bool MediaDemuxer::openFile(const std::string& filePath) {
     m_info = MediaInfo();
     m_info.filePath = filePath;

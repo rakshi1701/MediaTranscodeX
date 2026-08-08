@@ -24,6 +24,7 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 add_executable(Media_TranscodeX
     src/gui/main.cpp
     src/core/MediaDemuxer.cpp
+    src/core/MediaDecoder.cpp
 )
 
 # --- Target Include Directories ---
