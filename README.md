@@ -7,9 +7,18 @@ This project features low-level raw frame manipulation, advanced C++ Resource Ac
 
 ---
 
+## ✨ Key Features
+
+* ⚡ **Asynchronous Encoding Engine:** Transcoding runs on a dedicated background `QThread`, keeping the GUI 100% responsive during intensive jobs.
+* 🛡️ **Modern C++ RAII Wrappers:** Native C-style FFmpeg allocations (`AVFrame`, `AVPacket`, `AVFormatContext`, etc.) are managed via custom `std::unique_ptr` deleters to prevent memory leaks.
+* 🎨 **YUV → RGB Frame Scaling:** High-speed color space conversion using `libswscale` for rendering live video frame previews in Qt.
+* 📊 **Real-Time Progress & Telemetry:** Signals and slots deliver frame-accurate PTS percentage updates directly to UI progress bars.
+* ⏹️ **User Cancellation Control:** Cancel ongoing encoding jobs cleanly mid-stream with safe thread cleanup and file context flushing.
+
+---
 ## 📊 Project Status & Progress Tracker
 
-* **Current Sprint:** Sprint 5 Complete ✅ | **Next Up:** Sprint 6 (Qt UI Integration & Multithreading) 🚀
+* **Current Sprint:** Sprint 6 Complete ✅ 🚀
 
 | Sprint | Goal / Feature | Status | Key Milestones |
 | :--- | :--- | :---: | :--- |
@@ -18,7 +27,7 @@ This project features low-level raw frame manipulation, advanced C++ Resource Ac
 | **Sprint 3** | **Decoding Pipeline & Frame Access** | ✅ Completed | • Built `MediaDecoder` using `avcodec_send_packet()` and `avcodec_receive_frame()`.<br>• Implemented decoder flushing for end-of-stream leftover frames.<br>• Successfully extracted and freed raw uncompressed video `AVFrame` instances. |
 | **Sprint 4** | **Frame Scaling & Color Conversion** | ✅ Completed | • Integrated `libswscale` inside custom `FrameScaler` engine.<br>• Added hardware YUV to RGB24 color space pixel conversion.<br>• Rendered live video frames inside Qt GUI using `QImage` & `QPixmap`. |
 | **Sprint 5** | **Encoding Pipeline & Container Muxing** | ✅ Completed | • Implemented `MediaEncoder` to allocate output container contexts and video encoders.<br>• Handled timestamp rescaling (`av_packet_rescale_ts`) and packet muxing.<br>• Flushed encoder buffers and written container trailers to disk. |
-| **Sprint 6** | **Qt UI Integration & Threading** | ⏳ Pending | • Connect core C++ engine to Qt UI via `QThread` and Signals/Slots.<br>• Build conversion queue, progress bars, codec dropdowns, and preset settings. |
+| **Sprint 6** | **Qt UI Integration & Threading** | ✅ Completed | • Connect core C++ engine to Qt UI via `QThread` and Signals/Slots.<br>• Build conversion queue, progress bars, codec dropdowns, and preset settings. |
 ---
 
 ## 🛠️ System Architecture
@@ -55,22 +64,20 @@ The application uses a three-tier decoupled architecture:
 ```text
 Media_TranscodeX/
 ├── CMakeLists.txt             # Cross-platform build configuration
-├── README.md                  # Project documentation & sprint updates
+├── README.md                  # Project documentation
 ├── src/
 │   ├── core/                  # Pure C++ FFmpeg Engine (No Qt dependencies)
 │   │   ├── RAIIWrappers.h     # Modern C++ smart pointer deleters (std::unique_ptr)
 │   │   ├── MediaDemuxer.h/.cpp# Demuxer engine & metadata extraction
 │   │   ├── MediaDecoder.h/.cpp# Frame decoding pipeline
-│   │   ├── MediaEncoder.h/.cpp# Frame encoding pipeline
-│   │   └── FrameScaler.h/.cpp # Color space & image scaling
-│   ├── worker/                # Qt Threading & Orchestration (Sprint 6)
-│   │   ├── ConversionWorker.h/.cpp
-│   │   └── JobQueue.h/.cpp
+│   │   ├── MediaEncoder.h/.cpp# Frame encoding & container muxing
+│   │   └── FrameScaler.h/.cpp # Color space conversion & frame scaling
+│   ├── worker/                # Qt Threading & Orchestration
+│   │   └── ConversionWorker.h/.cpp # Background worker task
 │   └── gui/                   # Qt User Interface
-│       ├── main.cpp           # Entry point and Sprint test harness
-│       ├── MainWindow.h/.cpp  # (Sprint 6) Main desktop user interface
-│       └── VideoPreviewWidget.h/.cpp
-└── tests/                     # Unit tests for core engine
+│       ├── main.cpp           # Application entry point
+│       └── MainWindow.h/.cpp  # Desktop application dashboard
+└── tests/                     # Unit tests for core engine                   # Unit tests for core engine
 
 ```
 
