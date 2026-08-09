@@ -129,6 +129,3 @@ This project is licensed under the **MIT License**.
 
 ---
 
-### Ready for Sprint 3?
-
-Whenever you are ready, let me know, and we will write the **`MediaDecoder`** class to parse compressed packets into raw `AVFrame` instances!
