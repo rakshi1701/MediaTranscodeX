@@ -23,6 +23,8 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 # --- Define Executable Sources ---
 add_executable(Media_TranscodeX
     src/gui/main.cpp
+    src/gui/MainWindow.cpp
+    src/worker/ConversionWorker.cpp
     src/core/MediaDemuxer.cpp
     src/core/MediaDecoder.cpp
     src/core/FrameScaler.cpp
@@ -32,6 +34,9 @@ add_executable(Media_TranscodeX
 # --- Target Include Directories ---
 target_include_directories(Media_TranscodeX PRIVATE
     src/core
+    src/gui
+    src/worker
+    
 )
 
 target_link_libraries(Media_TranscodeX PRIVATE
