@@ -3,27 +3,27 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QFileDialog>
-#include <QPixmap>
 #include <QDebug>
 
 #include "MediaDemuxer.h"
 #include "MediaDecoder.h"
-#include "FrameScaler.h"
+#include "MediaEncoder.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
     Core::MediaDemuxer demuxer;
     Core::MediaDecoder decoder;
-    Core::FrameScaler scaler;
+    Core::MediaEncoder encoder;
 
-    QImage extractedPreviewImage;
-    bool frameExtracted = false;
+    int encodedFrameCount = 0;
+    bool success = false;
+    std::string outputPath = "/tmp/output_test.mp4";
 
-    // 1. Prompt user for video file
+    // 1. Prompt user for source file
     QString filePath = QFileDialog::getOpenFileName(
         nullptr,
-        "Select Test Video File for Frame Preview",
+        "Select Source Video File to Transcode",
         "",
         "Video Files (*.mp4 *.mkv *.avi *.webm);;All Files (*)"
     );
@@ -35,59 +35,65 @@ int main(int argc, char *argv[]) {
             AVStream* videoStream = demuxer.getVideoStream();
 
             if (videoStream && decoder.init(videoStream)) {
-                AVCodecContext* codecCtx = decoder.getCodecContext();
-                int videoStreamIdx = demuxer.getInfo().videoStreamIndex;
+                AVCodecContext* decoderCtx = decoder.getCodecContext();
 
-                // Configure scaler to convert raw frames into preview-sized RGB image (640x360)
-                int previewWidth = 640;
-                int previewHeight = 360;
-                scaler.init(codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
-                            previewWidth, previewHeight, AV_PIX_FMT_RGB24);
+                // Setup output encoder configuration
+                Core::EncoderConfig config;
+                config.outputFilePath = outputPath;
+                config.width = decoderCtx->width;
+                config.height = decoderCtx->height;
+                config.pixFmt = AV_PIX_FMT_YUV420P; // Standard compatible pixel format
+                config.framerate = 30;
 
-                Core::PacketPtr packet(av_packet_alloc());
+                if (encoder.init(config)) {
+                    Core::PacketPtr packet(av_packet_alloc());
+                    int videoStreamIdx = demuxer.getInfo().videoStreamIndex;
 
-                // Read packets until we decode the first video frame
-                while (av_read_frame(demuxer.getFormatContext(), packet.get()) >= 0 && !frameExtracted) {
-                    if (packet->stream_index == videoStreamIdx) {
-                        decoder.decodePacket(packet.get(), [&](AVFrame* frame) {
-                            if (!frameExtracted) {
-                                // Scale YUV frame to RGB QImage
-                                extractedPreviewImage = scaler.scaleToQImage(frame);
-                                frameExtracted = !extractedPreviewImage.isNull();
-                            }
-                        });
+                    // Decode & Re-encode up to 150 frames
+                    while (av_read_frame(demuxer.getFormatContext(), packet.get()) >= 0 && encodedFrameCount < 150) {
+                        if (packet->stream_index == videoStreamIdx) {
+                            decoder.decodePacket(packet.get(), [&](AVFrame* frame) {
+                                if (encodedFrameCount < 150) {
+                                    encoder.encodeVideoFrame(frame);
+                                    encodedFrameCount++;
+                                }
+                            });
+                        }
+                        av_packet_unref(packet.get());
                     }
-                    av_packet_unref(packet.get());
+
+                    // Flush encoder & finalize output container
+                    encoder.finish();
+                    success = (encodedFrameCount > 0);
                 }
             }
         }
     }
 
-    // 2. Render GUI with live video preview
+    // 2. Render GUI result
     QWidget window;
-    window.setWindowTitle("Media_TranscodeX - Sprint 4 Frame Scaler & Preview Test");
-    window.resize(680, 480);
+    window.setWindowTitle("Media_TranscodeX - Sprint 5 Encoder Pipeline Test");
+    window.resize(550, 300);
 
     QVBoxLayout *layout = new QVBoxLayout(&window);
 
-    QLabel *infoLabel = new QLabel(&window);
-    infoLabel->setAlignment(Qt::AlignCenter);
-
-    QLabel *imageLabel = new QLabel(&window);
-    imageLabel->setAlignment(Qt::AlignCenter);
-
-    if (frameExtracted) {
-        infoLabel->setText(QString("Successfully decoded and scaled video frame!\nResolution: %1x%2 -> Scaled to 640x360 RGB24")
-                           .arg(demuxer.getInfo().width)
-                           .arg(demuxer.getInfo().height));
-
-        imageLabel->setPixmap(QPixmap::fromImage(extractedPreviewImage));
+    QString statusText;
+    if (success) {
+        statusText = QString("Transcoding Test Successful!\n\n"
+                             "Source: %1\n"
+                             "Target Output: %2\n"
+                             "Encoded Video Frames: %3\n"
+                             "Status: Transcoded video written and closed successfully!")
+                         .arg(filePath)
+                         .arg(QString::fromStdString(outputPath))
+                         .arg(encodedFrameCount);
     } else {
-        infoLabel->setText("No frame extracted or invalid video file selected.");
+        statusText = QString("Transcoding failed or no input file selected.");
     }
 
-    layout->addWidget(infoLabel);
-    layout->addWidget(imageLabel);
+    QLabel *label = new QLabel(statusText, &window);
+    label->setAlignment(Qt::AlignCenter);
+    layout->addWidget(label);
 
     window.show();
     return app.exec();

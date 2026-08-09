@@ -9,7 +9,7 @@ This project features low-level raw frame manipulation, advanced C++ Resource Ac
 
 ## 📊 Project Status & Progress Tracker
 
-* **Current Sprint:** Sprint 4 Complete ✅ | **Next Up:** Sprint 5 (Encoding Pipeline & Container Muxing) 🚀
+* **Current Sprint:** Sprint 5 Complete ✅ | **Next Up:** Sprint 6 (Qt UI Integration & Multithreading) 🚀
 
 | Sprint | Goal / Feature | Status | Key Milestones |
 | :--- | :--- | :---: | :--- |
@@ -17,9 +17,8 @@ This project features low-level raw frame manipulation, advanced C++ Resource Ac
 | **Sprint 2** | **RAII Memory Management & Demuxing** | ✅ Completed | • Implemented custom C++ RAII smart pointer deleters (`std::unique_ptr`) for `AVFormatContext`, `AVCodecContext`, `AVPacket`, and `AVFrame`.<br>• Created `MediaDemuxer` class to safely open containers and extract stream metadata.<br>• Added dynamic file selection using native Qt `QFileDialog`. |
 | **Sprint 3** | **Decoding Pipeline & Frame Access** | ✅ Completed | • Built `MediaDecoder` using `avcodec_send_packet()` and `avcodec_receive_frame()`.<br>• Implemented decoder flushing for end-of-stream leftover frames.<br>• Successfully extracted and freed raw uncompressed video `AVFrame` instances. |
 | **Sprint 4** | **Frame Scaling & Color Conversion** | ✅ Completed | • Integrated `libswscale` inside custom `FrameScaler` engine.<br>• Added hardware YUV to RGB24 color space pixel conversion.<br>• Rendered live video frames inside Qt GUI using `QImage` & `QPixmap`. |
-| **Sprint 5** | **Encoding Pipeline & Container Muxing** | ⏳ Pending | • Initialize encoder contexts and target container formats.<br>• Rescale media timestamps (`av_rescale_q`) and write interleaved streams to disk. |
+| **Sprint 5** | **Encoding Pipeline & Container Muxing** | ✅ Completed | • Implemented `MediaEncoder` to allocate output container contexts and video encoders.<br>• Handled timestamp rescaling (`av_packet_rescale_ts`) and packet muxing.<br>• Flushed encoder buffers and written container trailers to disk. |
 | **Sprint 6** | **Qt UI Integration & Threading** | ⏳ Pending | • Connect core C++ engine to Qt UI via `QThread` and Signals/Slots.<br>• Build conversion queue, progress bars, codec dropdowns, and preset settings. |
-
 ---
 
 ## 🛠️ System Architecture
@@ -62,7 +61,7 @@ Media_TranscodeX/
 │   │   ├── RAIIWrappers.h     # Modern C++ smart pointer deleters (std::unique_ptr)
 │   │   ├── MediaDemuxer.h/.cpp# Demuxer engine & metadata extraction
 │   │   ├── MediaDecoder.h/.cpp# Frame decoding pipeline
-│   │   ├── MediaEncoder.h/.cpp# (Sprint 5) Frame encoding pipeline
+│   │   ├── MediaEncoder.h/.cpp# Frame encoding pipeline
 │   │   └── FrameScaler.h/.cpp # Color space & image scaling
 │   ├── worker/                # Qt Threading & Orchestration (Sprint 6)
 │   │   ├── ConversionWorker.h/.cpp
@@ -71,7 +70,7 @@ Media_TranscodeX/
 │       ├── main.cpp           # Entry point and Sprint test harness
 │       ├── MainWindow.h/.cpp  # (Sprint 6) Main desktop user interface
 │       └── VideoPreviewWidget.h/.cpp
-└── tests/                     # Unit tests for core engine                    # Unit tests for core engine
+└── tests/                     # Unit tests for core engine
 
 ```
 

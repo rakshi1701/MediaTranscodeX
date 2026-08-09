@@ -26,6 +26,7 @@ add_executable(Media_TranscodeX
     src/core/MediaDemuxer.cpp
     src/core/MediaDecoder.cpp
     src/core/FrameScaler.cpp
+    src/core/MediaEncoder.cpp
 )
 
 # --- Target Include Directories ---
