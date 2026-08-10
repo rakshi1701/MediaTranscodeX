@@ -3,7 +3,10 @@ name: Build Cross-Platform Release
 on:
   push:
     tags:
-      - 'v*' # Triggers on version tags like v1.0.0, v1.0.1, etc.
+      - 'v*' # Triggers on tags like v1.0.0, v1.0.1, etc.
+
+permissions:
+  contents: write # Grants write permissions to create GitHub Releases
 
 jobs:
   build:
@@ -30,42 +33,49 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y build-essential cmake pkg-config qt6-base-dev \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libfuse2 imagemagick
 
       - name: Build Linux (AppImage)
         if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           mkdir build_ci && cd build_ci
           cmake .. -DCMAKE_BUILD_TYPE=Release
           make -j$(nproc)
           cd ..
+
+          # Create minimal desktop metadata file required by linuxdeploy
+          cat << 'EOF' > Media_TranscodeX.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Media_TranscodeX
+          Exec=Media_TranscodeX
+          Icon=Media_TranscodeX
+          Categories=AudioVideo;Utility;
+          EOF
+
+          # Create placeholder icon file
+          mkdir -p icons
+          convert -size 128x128 xc:blue icons/Media_TranscodeX.png || touch icons/Media_TranscodeX.png
+
+          # Download and run linuxdeploy
           wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir --executable build_ci/Media_TranscodeX --output appimage
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+            --executable build_ci/Media_TranscodeX \
+            --desktop-file Media_TranscodeX.desktop \
+            --icon-file icons/Media_TranscodeX.png \
+            --output appimage
+
           mv Media_TranscodeX*.AppImage Media_TranscodeX-Linux.AppImage
 
-      # --- 2. Windows Setup & ZIP Build ---
-      - name: Install Windows Dependencies
-        if: runner.os == 'Windows'
-        run: |
-          vcpkg install ffmpeg:x64-windows qtbase:x64-windows
-
-      - name: Build Windows
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          mkdir build_ci && cd build_ci
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
-          cmake --build . --config Release
-          windeployqt --no-compiler-runtime Release/Media_TranscodeX.exe
-          cd Release
-          7z a ../../Media_TranscodeX-Windows.zip *
-
-      # --- 3. macOS Setup & DMG Build ---
+      # --- 2. macOS Setup & DMG Build ---
       - name: Install macOS Dependencies
         if: runner.os == 'macOS'
         run: |
           brew install qt@6 ffmpeg cmake
+          echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
 
       - name: Build macOS (.dmg)
         if: runner.os == 'macOS'
@@ -76,9 +86,27 @@ jobs:
           macdeployqt Media_TranscodeX.app -dmg
           mv Media_TranscodeX.dmg ../Media_TranscodeX-macOS.dmg
 
-      # --- 4. Upload Artifacts to GitHub Release ---
+      # --- 3. Windows Setup & ZIP Build ---
+      - name: Install Windows Dependencies & Build
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          vcpkg install ffmpeg:x64-windows qtbase:x64-windows
+          mkdir build_ci && cd build_ci
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          cmake --build . --config Release
+
+          WINDEPLOYQT=$(find /c/vcpkg -name "windeployqt.exe" | head -n 1)
+          if [ -n "$WINDEPLOYQT" ]; then
+            "$WINDEPLOYQT" --no-compiler-runtime Release/Media_TranscodeX.exe
+          fi
+
+          cd Release
+          7z a ../../Media_TranscodeX-Windows.zip *
+
+      # --- 4. Upload Artifacts to Release ---
       - name: Upload Artifacts to GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.artifact_name }}
         env:
