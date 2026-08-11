@@ -29,6 +29,7 @@ add_executable(Media_TranscodeX
     src/core/MediaDecoder.cpp
     src/core/FrameScaler.cpp
     src/core/MediaEncoder.cpp
+    src/core/AudioResampler.cpp
 )
 
 # Enable native macOS .app bundle structure when building on Mac
