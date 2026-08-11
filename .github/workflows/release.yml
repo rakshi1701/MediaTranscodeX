@@ -75,7 +75,6 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install qt@6 ffmpeg cmake
-          echo "$(brew --prefix qt@6)/bin" >> $GITHUB_PATH
 
       - name: Build macOS (.dmg)
         if: runner.os == 'macOS'
@@ -83,7 +82,12 @@ jobs:
           mkdir build_ci && cd build_ci
           cmake .. -DCMAKE_PREFIX_PATH="$(brew --prefix qt@6)" -DCMAKE_BUILD_TYPE=Release
           make -j$(sysctl -n hw.ncpu)
-          macdeployqt Media_TranscodeX.app -dmg
+          
+          # Locate macdeployqt from Homebrew path
+          MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
+          
+          # Package as native macOS disk image (.dmg)
+          "$MACDEPLOYQT" Media_TranscodeX.app -dmg
           mv Media_TranscodeX.dmg ../Media_TranscodeX-macOS.dmg
 
       # --- 3. Windows Setup & ZIP Build ---

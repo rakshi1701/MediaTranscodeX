@@ -31,6 +31,15 @@ add_executable(Media_TranscodeX
     src/core/MediaEncoder.cpp
 )
 
+# Enable native macOS .app bundle structure when building on Mac
+if(APPLE)
+    set_target_properties(Media_TranscodeX PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "Media_TranscodeX"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.media.transcodex"
+    )
+endif()
+
 # --- Target Include Directories ---
 target_include_directories(Media_TranscodeX PRIVATE
     src/core
