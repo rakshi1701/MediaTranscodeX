@@ -99,28 +99,72 @@ void MainWindow::browseOutputFile() {
     }
 }
 
+// void MainWindow::startConversion() {
+//     if (m_inputPathEdit->text().isEmpty() || m_outputPathEdit->text().isEmpty()) {
+//         QMessageBox::warning(this, "Missing Path", "Please select valid input and output file paths.");
+//         return;
+//     }
+
+//     Worker::ConversionJob job;
+//     job.inputPath = m_inputPathEdit->text();
+//     job.outputPath = m_outputPathEdit->text();
+//     job.bitRate = m_presetCombo->currentData().toInt();
+
+//     m_workerThread = new QThread(this);
+//     m_worker = new Worker::ConversionWorker(job);
+//     m_worker->moveToThread(m_workerThread);
+
+//     // Thread Wiring
+//     connect(m_workerThread, &QThread::started, m_worker, &Worker::ConversionWorker::process);
+//     connect(m_worker, &Worker::ConversionWorker::progressUpdated, this, &MainWindow::onProgressUpdated);
+//     connect(m_worker, &Worker::ConversionWorker::statusMessage, this, &MainWindow::onStatusMessage);
+//     connect(m_worker, &Worker::ConversionWorker::conversionFinished, this, &MainWindow::onConversionFinished);
+
+//     // Cleanup wiring
+//     connect(m_worker, &Worker::ConversionWorker::conversionFinished, m_workerThread, &QThread::quit);
+//     connect(m_worker, &Worker::ConversionWorker::conversionFinished, m_worker, &QObject::deleteLater);
+//     connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+
+//     m_startBtn->setEnabled(false);
+//     m_cancelBtn->setEnabled(true);
+//     m_progressBar->setValue(0);
+
+//     m_workerThread->start();
+// }
+
+
 void MainWindow::startConversion() {
     if (m_inputPathEdit->text().isEmpty() || m_outputPathEdit->text().isEmpty()) {
         QMessageBox::warning(this, "Missing Path", "Please select valid input and output file paths.");
         return;
     }
 
-    Worker::ConversionJob job;
-    job.inputPath = m_inputPathEdit->text();
-    job.outputPath = m_outputPathEdit->text();
-    job.bitRate = m_presetCombo->currentData().toInt();
+    Core::TranscodeOptions options;
+    options.inputFilePath = m_inputPathEdit->text().toStdString();
+    options.outputFilePath = m_outputPathEdit->text().toStdString();
+
+    // Default Video Options
+    options.video.enableVideo = true;
+    options.video.codecId = AV_CODEC_ID_H264;
+    options.video.bitRate = m_presetCombo->currentData().toInt();
+
+    // Default Audio Options (AAC 48kHz Stereo @ 192kbps)
+    options.audio.enableAudio = true;
+    options.audio.codecId = AV_CODEC_ID_AAC;
+    options.audio.sampleRate = 48000;
+    options.audio.channels = 2;
+    options.audio.bitRate = 192000;
+    options.audio.sampleFmt = AV_SAMPLE_FMT_FLTP;
 
     m_workerThread = new QThread(this);
-    m_worker = new Worker::ConversionWorker(job);
+    m_worker = new Worker::ConversionWorker(options);
     m_worker->moveToThread(m_workerThread);
 
-    // Thread Wiring
     connect(m_workerThread, &QThread::started, m_worker, &Worker::ConversionWorker::process);
     connect(m_worker, &Worker::ConversionWorker::progressUpdated, this, &MainWindow::onProgressUpdated);
     connect(m_worker, &Worker::ConversionWorker::statusMessage, this, &MainWindow::onStatusMessage);
     connect(m_worker, &Worker::ConversionWorker::conversionFinished, this, &MainWindow::onConversionFinished);
 
-    // Cleanup wiring
     connect(m_worker, &Worker::ConversionWorker::conversionFinished, m_workerThread, &QThread::quit);
     connect(m_worker, &Worker::ConversionWorker::conversionFinished, m_worker, &QObject::deleteLater);
     connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);

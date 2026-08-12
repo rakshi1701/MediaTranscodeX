@@ -4,25 +4,15 @@
 #include <QObject>
 #include <QString>
 #include <atomic>
-#include "MediaDemuxer.h"
-#include "MediaDecoder.h"
-#include "MediaEncoder.h"
+#include "TranscodeOptions.h"
 
 namespace Worker {
-
-struct ConversionJob {
-    QString inputPath;
-    QString outputPath;
-    int targetWidth = 1280;
-    int targetHeight = 720;
-    int bitRate = 2000000;
-};
 
 class ConversionWorker : public QObject {
     Q_OBJECT
 
 public:
-    explicit ConversionWorker(const ConversionJob& job, QObject *parent = nullptr);
+    explicit ConversionWorker(const Core::TranscodeOptions& options, QObject *parent = nullptr);
     ~ConversionWorker() override = default;
 
 public slots:
@@ -35,7 +25,7 @@ signals:
     void conversionFinished(bool success, const QString& message);
 
 private:
-    ConversionJob m_job;
+    Core::TranscodeOptions m_options;
     std::atomic<bool> m_cancelRequested{false};
 };
 

@@ -2,19 +2,9 @@
 #define MEDIA_ENCODER_H
 
 #include "RAIIWrappers.h"
-#include <string>
+#include "TranscodeOptions.h"
 
 namespace Core {
-
-struct EncoderConfig {
-    std::string outputFilePath;
-    int width = 1280;
-    int height = 720;
-    int bitRate = 2000000; // 2 Mbps
-    int framerate = 30;
-    AVPixelFormat pixFmt = AV_PIX_FMT_YUV420P;
-    AVCodecID codecId = AV_CODEC_ID_H264;
-};
 
 class MediaEncoder {
 public:
@@ -24,22 +14,32 @@ public:
     MediaEncoder(const MediaEncoder&) = delete;
     MediaEncoder& operator=(const MediaEncoder&) = delete;
 
-    // Initializes output container and video codec context
-    bool init(const EncoderConfig& config);
+    // Initialize container with video and audio options
+    bool init(const TranscodeOptions& options, bool hasVideo, bool hasAudio);
 
-    // Encodes a raw video AVFrame into an output packet and writes it to container
     bool encodeVideoFrame(AVFrame* frame);
+    bool encodeAudioFrame(AVFrame* frame);
 
-    // Flushes buffered packets and closes container trailer
     bool finish();
 
+    AVCodecContext* getVideoCodecContext() const { return m_videoCodecCtx; }
+    AVCodecContext* getAudioCodecContext() const { return m_audioCodecCtx; }
+
 private:
-    bool writePacket(AVPacket* pkt);
+    bool writePacket(AVPacket* pkt, AVRational timeBase, AVStream* stream);
 
     AVFormatContext* m_outputFormatCtx = nullptr;
+
+    // Video Stream State
     AVCodecContext* m_videoCodecCtx = nullptr;
     AVStream* m_videoStream = nullptr;
-    int64_t m_nextPts = 0;
+    int64_t m_nextVideoPts = 0;
+
+    // Audio Stream State
+    AVCodecContext* m_audioCodecCtx = nullptr;
+    AVStream* m_audioStream = nullptr;
+    int64_t m_nextAudioPts = 0;
+
     bool m_headerWritten = false;
     bool m_finished = false;
 };

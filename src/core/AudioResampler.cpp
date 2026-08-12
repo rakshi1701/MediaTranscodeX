@@ -7,26 +7,32 @@ AudioResampler::~AudioResampler() {
     if (m_swrCtx) {
         swr_free(&m_swrCtx);
     }
-    av_channel_layout_uninit(&m_outLayout);
 }
 
-bool AudioResampler::init(const AVChannelLayout* inLayout, AVSampleFormat inFormat, int inSampleRate,
-                          const AVChannelLayout* outLayout, AVSampleFormat outFormat, int outSampleRate) {
-    if (!inLayout || !outLayout) return false;
+bool AudioResampler::init(uint64_t inChannelLayout, AVSampleFormat inFormat, int inSampleRate,
+                          uint64_t outChannelLayout, AVSampleFormat outFormat, int outSampleRate) {
+    
+    // Default to stereo if input layout is undefined
+    if (inChannelLayout == 0) {
+        inChannelLayout = AV_CH_LAYOUT_STEREO;
+    }
+    if (outChannelLayout == 0) {
+        outChannelLayout = AV_CH_LAYOUT_STEREO;
+    }
 
-    av_channel_layout_copy(&m_outLayout, outLayout);
+    m_outChannelLayout = outChannelLayout;
     m_outFormat = outFormat;
     m_outSampleRate = outSampleRate;
 
-    // Allocate SwrContext
-    int ret = swr_alloc_set_opts2(
-        &m_swrCtx,
-        &m_outLayout, m_outFormat, m_outSampleRate,
-        inLayout, inFormat, inSampleRate,
+    // Use swr_alloc_set_opts for backwards compatibility with FFmpeg 4.x
+    m_swrCtx = swr_alloc_set_opts(
+        nullptr,
+        m_outChannelLayout, m_outFormat, m_outSampleRate,
+        inChannelLayout, inFormat, inSampleRate,
         0, nullptr
     );
 
-    if (ret < 0 || !m_swrCtx) {
+    if (!m_swrCtx) {
         std::cerr << "[AudioResampler] Error: Failed to allocate SwrContext." << std::endl;
         return false;
     }
@@ -45,7 +51,6 @@ FramePtr AudioResampler::resampleFrame(const AVFrame* inFrame) {
     FramePtr outFrame(av_frame_alloc());
     if (!outFrame) return nullptr;
 
-    // Calculate maximum output sample count with delay buffer
     int64_t delay = swr_get_delay(m_swrCtx, inFrame->sample_rate);
     int outSamples = static_cast<int>(av_rescale_rnd(
         delay + inFrame->nb_samples,
@@ -56,7 +61,7 @@ FramePtr AudioResampler::resampleFrame(const AVFrame* inFrame) {
 
     outFrame->sample_rate = m_outSampleRate;
     outFrame->format = m_outFormat;
-    av_channel_layout_copy(&outFrame->ch_layout, &m_outLayout);
+    outFrame->channel_layout = m_outChannelLayout;
     outFrame->nb_samples = outSamples;
 
     if (av_frame_get_buffer(outFrame.get(), 0) < 0) {
@@ -64,7 +69,6 @@ FramePtr AudioResampler::resampleFrame(const AVFrame* inFrame) {
         return nullptr;
     }
 
-    // Perform conversion
     int convertedSamples = swr_convert(
         m_swrCtx,
         outFrame->data,

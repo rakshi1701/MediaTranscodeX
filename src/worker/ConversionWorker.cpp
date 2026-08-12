@@ -1,80 +1,115 @@
 #include "ConversionWorker.h"
+#include "MediaDemuxer.h"
+#include "MediaDecoder.h"
+#include "MediaEncoder.h"
+#include "AudioResampler.h"
 #include <QDebug>
 
 namespace Worker {
 
-ConversionWorker::ConversionWorker(const ConversionJob& job, QObject *parent)
-    : QObject(parent), m_job(job) {}
+ConversionWorker::ConversionWorker(const Core::TranscodeOptions& options, QObject *parent)
+    : QObject(parent), m_options(options) {}
 
 void ConversionWorker::cancel() {
     m_cancelRequested = true;
 }
 
 void ConversionWorker::process() {
-    emit statusMessage("Opening input media file...");
+    emit statusMessage("Opening input file...");
 
     Core::MediaDemuxer demuxer;
-    if (!demuxer.openFile(m_job.inputPath.toStdString())) {
-        emit conversionFinished(false, "Failed to open input file.");
+    if (!demuxer.openFile(m_options.inputFilePath)) {
+        emit conversionFinished(false, "Failed to open input media file.");
         return;
     }
 
     AVStream* videoStream = demuxer.getVideoStream();
-    if (!videoStream) {
-        emit conversionFinished(false, "No valid video stream found.");
+    AVStream* audioStream = demuxer.getAudioStream();
+
+    bool hasVideo = (videoStream != nullptr) && m_options.video.enableVideo;
+    bool hasAudio = (audioStream != nullptr) && m_options.audio.enableAudio;
+
+    // Initialize Decoders
+    Core::MediaDecoder videoDecoder;
+    Core::MediaDecoder audioDecoder;
+
+    if (hasVideo && !videoDecoder.init(videoStream)) {
+        emit conversionFinished(false, "Failed to initialize video decoder.");
         return;
     }
 
-    Core::MediaDecoder decoder;
-    if (!decoder.init(videoStream)) {
-        emit conversionFinished(false, "Failed to initialize decoder.");
+    if (hasAudio && !audioDecoder.init(audioStream)) {
+        emit conversionFinished(false, "Failed to initialize audio decoder.");
         return;
     }
 
-    AVCodecContext* decoderCtx = decoder.getCodecContext();
+    // Auto-fill video options from input if unset
+    if (hasVideo) {
+        if (m_options.video.targetWidth <= 0)  m_options.video.targetWidth = videoDecoder.getCodecContext()->width;
+        if (m_options.video.targetHeight <= 0) m_options.video.targetHeight = videoDecoder.getCodecContext()->height;
+    }
 
-    Core::EncoderConfig config;
-    config.outputFilePath = m_job.outputPath.toStdString();
-    config.width = (m_job.targetWidth > 0) ? m_job.targetWidth : decoderCtx->width;
-    config.height = (m_job.targetHeight > 0) ? m_job.targetHeight : decoderCtx->height;
-    config.bitRate = m_job.bitRate;
-
+    // Initialize Encoder
     Core::MediaEncoder encoder;
-    if (!encoder.init(config)) {
+    if (!encoder.init(m_options, hasVideo, hasAudio)) {
         emit conversionFinished(false, "Failed to initialize output encoder.");
         return;
     }
 
-    emit statusMessage("Transcoding in progress...");
+    // Initialize Audio Resampler if needed
+    Core::AudioResampler resampler;
+    if (hasAudio) {
+        AVCodecContext* audioDecCtx = audioDecoder.getCodecContext();
+        AVCodecContext* audioEncCtx = encoder.getAudioCodecContext();
+
+        uint64_t inLayout = audioDecCtx->channel_layout ? audioDecCtx->channel_layout : av_get_default_channel_layout(audioDecCtx->channels);
+        uint64_t outLayout = audioEncCtx->channel_layout ? audioEncCtx->channel_layout : av_get_default_channel_layout(audioEncCtx->channels);
+
+        if (!resampler.init(
+                inLayout, audioDecCtx->sample_fmt, audioDecCtx->sample_rate,
+                outLayout, audioEncCtx->sample_fmt, audioEncCtx->sample_rate)) {
+            emit conversionFinished(false, "Failed to initialize audio resampler.");
+            return;
+        }
+    }
+
+    emit statusMessage("Transcoding video and audio streams...");
 
     double totalDuration = demuxer.getInfo().durationSeconds;
-    int videoStreamIdx = demuxer.getInfo().videoStreamIndex;
-    int64_t processedFrames = 0;
+    int vIdx = demuxer.getInfo().videoStreamIndex;
+    int aIdx = demuxer.getInfo().audioStreamIndex;
 
     Core::PacketPtr packet(av_packet_alloc());
-    AVRational timeBase = videoStream->time_base;
 
     while (av_read_frame(demuxer.getFormatContext(), packet.get()) >= 0) {
         if (m_cancelRequested) {
-            emit statusMessage("Conversion cancelled by user.");
-            emit conversionFinished(false, "Cancelled.");
+            emit statusMessage("Cancelled by user.");
+            emit conversionFinished(false, "Transcoding cancelled.");
             return;
         }
 
-        if (packet->stream_index == videoStreamIdx) {
-            // Calculate progress based on frame timestamps
+        // Handle Video Packets
+        if (hasVideo && packet->stream_index == vIdx) {
             if (totalDuration > 0 && packet->pts != AV_NOPTS_VALUE) {
-                double currentSeconds = packet->pts * av_q2d(timeBase);
-                int progress = static_cast<int>((currentSeconds / totalDuration) * 100.0);
-                progress = std::min(100, std::max(0, progress));
-                emit progressUpdated(progress);
+                double sec = packet->pts * av_q2d(videoStream->time_base);
+                int progress = static_cast<int>((sec / totalDuration) * 100.0);
+                emit progressUpdated(std::min(100, std::max(0, progress)));
             }
 
-            decoder.decodePacket(packet.get(), [&](AVFrame* frame) {
+            videoDecoder.decodePacket(packet.get(), [&](AVFrame* frame) {
                 encoder.encodeVideoFrame(frame);
-                processedFrames++;
             });
         }
+        // Handle Audio Packets
+        else if (hasAudio && packet->stream_index == aIdx) {
+            audioDecoder.decodePacket(packet.get(), [&](AVFrame* frame) {
+                Core::FramePtr resampledFrame = resampler.resampleFrame(frame);
+                if (resampledFrame) {
+                    encoder.encodeAudioFrame(resampledFrame.get());
+                }
+            });
+        }
+
         av_packet_unref(packet.get());
     }
 
@@ -82,7 +117,7 @@ void ConversionWorker::process() {
     encoder.finish();
 
     emit progressUpdated(100);
-    emit conversionFinished(true, QString("Transcoding complete! Total frames processed: %1").arg(processedFrames));
+    emit conversionFinished(true, "Phase 2.1 Complete: Video and Audio Transcoded & Resampled!");
 }
 
 } // namespace Worker
