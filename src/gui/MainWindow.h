@@ -7,6 +7,7 @@
 #include <QProgressBar>
 #include <QLabel>
 #include <QComboBox>
+#include <QSpinBox>
 #include <QThread>
 #include <QTreeWidget>
 #include <QHeaderView>
@@ -30,6 +31,8 @@ private slots:
     void addAudioTrack();
     void addSubtitleTrack();
     void removeSelectedTrack();
+    void onFormatChanged(int index);
+    void onResolutionChanged(int index);
 
     void onProgressUpdated(int percentage);
     void onStatusMessage(const QString& message);
@@ -40,6 +43,10 @@ private:
 
     QLineEdit *m_inputPathEdit = nullptr;
     QLineEdit *m_outputPathEdit = nullptr;
+    QComboBox *m_formatCombo = nullptr;
+    QComboBox *m_resCombo = nullptr;
+    QSpinBox *m_widthSpin = nullptr;
+    QSpinBox *m_heightSpin = nullptr;
     QComboBox *m_presetCombo = nullptr;
     QProgressBar *m_progressBar = nullptr;
     QLabel *m_statusLabel = nullptr;

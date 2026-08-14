@@ -25,6 +25,9 @@ public:
     // Converts input AVFrame (e.g. YUV420p) to a Qt QImage (RGB24)
     QImage scaleToQImage(const AVFrame* srcFrame);
 
+    // Rescales input AVFrame to target dimensions and pixel format
+    FramePtr scaleFrame(const AVFrame* srcFrame);
+
 private:
     SwsContext* m_swsContext = nullptr;
     int m_srcWidth = 0;

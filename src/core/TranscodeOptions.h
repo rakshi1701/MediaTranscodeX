@@ -77,6 +77,41 @@ struct TranscodeOptions {
     std::vector<TrackSelection> selectedSubtitleTracks;
 };
 
+inline void applyContainerDefaults(TranscodeOptions& options, const std::string& ext) {
+    std::string format = ext;
+    if (!format.empty() && format[0] == '.') format = format.substr(1);
+
+    if (format == "webm") {
+        options.video.codecId = AV_CODEC_ID_VP9;
+        options.audio.codecId = AV_CODEC_ID_OPUS;
+        options.audio.sampleFmt = AV_SAMPLE_FMT_FLT;
+    } else if (format == "avi") {
+        options.video.codecId = AV_CODEC_ID_MPEG4;
+        options.audio.codecId = AV_CODEC_ID_MP3;
+        options.audio.sampleFmt = AV_SAMPLE_FMT_S16P;
+    } else if (format == "mp3") {
+        options.video.enableVideo = false;
+        options.audio.enableAudio = true;
+        options.audio.codecId = AV_CODEC_ID_MP3;
+        options.audio.sampleFmt = AV_SAMPLE_FMT_S16P;
+    } else if (format == "wav") {
+        options.video.enableVideo = false;
+        options.audio.enableAudio = true;
+        options.audio.codecId = AV_CODEC_ID_PCM_S16LE;
+        options.audio.sampleFmt = AV_SAMPLE_FMT_S16;
+    } else if (format == "flac") {
+        options.video.enableVideo = false;
+        options.audio.enableAudio = true;
+        options.audio.codecId = AV_CODEC_ID_FLAC;
+        options.audio.sampleFmt = AV_SAMPLE_FMT_S16;
+    } else {
+        // Default MP4 / MKV / MOV / FLV / TS
+        options.video.codecId = AV_CODEC_ID_H264;
+        options.audio.codecId = AV_CODEC_ID_AAC;
+        options.audio.sampleFmt = AV_SAMPLE_FMT_FLTP;
+    }
+}
+
 } // namespace Core
 
 #endif // TRANSCODE_OPTIONS_H

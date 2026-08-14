@@ -73,14 +73,68 @@ void MainWindow::setupUi() {
     trackBtnLayout->addWidget(m_removeTrackBtn);
     inspectorLayout->addLayout(trackBtnLayout);
 
-    // Preset Options
-    QHBoxLayout *presetLayout = new QHBoxLayout();
+    // Transcode & Output Settings Section
+    QGroupBox *transcodeGroup = new QGroupBox("⚙️ Transcode & Output Settings", this);
+    QVBoxLayout *transcodeLayout = new QVBoxLayout(transcodeGroup);
+
+    // Format & Preset Row
+    QHBoxLayout *formatPresetLayout = new QHBoxLayout();
+    m_formatCombo = new QComboBox(this);
+    m_formatCombo->addItem("MP4 Video (.mp4)", "mp4");
+    m_formatCombo->addItem("MKV Video (.mkv)", "mkv");
+    m_formatCombo->addItem("WebM Video (.webm)", "webm");
+    m_formatCombo->addItem("AVI Video (.avi)", "avi");
+    m_formatCombo->addItem("QuickTime MOV (.mov)", "mov");
+    m_formatCombo->addItem("Flash FLV (.flv)", "flv");
+    m_formatCombo->addItem("MPEG-TS (.ts)", "ts");
+    m_formatCombo->addItem("MP3 Audio Only (.mp3)", "mp3");
+    m_formatCombo->addItem("WAV Audio Only (.wav)", "wav");
+    m_formatCombo->addItem("FLAC Audio Only (.flac)", "flac");
+
+    connect(m_formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::onFormatChanged);
+
     m_presetCombo = new QComboBox(this);
-    m_presetCombo->addItem("H.264 MP4 - High Quality (1080p, 4Mbps)", 4000000);
-    m_presetCombo->addItem("H.264 MP4 - Standard Quality (720p, 2Mbps)", 2000000);
-    m_presetCombo->addItem("H.264 MP4 - Low Bitrate (480p, 1Mbps)", 1000000);
-    presetLayout->addWidget(new QLabel("Preset:", this));
-    presetLayout->addWidget(m_presetCombo);
+    m_presetCombo->addItem("High Quality (4 Mbps)", 4000000);
+    m_presetCombo->addItem("Standard Quality (2 Mbps)", 2000000);
+    m_presetCombo->addItem("Low Bitrate (1 Mbps)", 1000000);
+
+    formatPresetLayout->addWidget(new QLabel("Container Format:", this));
+    formatPresetLayout->addWidget(m_formatCombo);
+    formatPresetLayout->addWidget(new QLabel("Video Bitrate:", this));
+    formatPresetLayout->addWidget(m_presetCombo);
+    transcodeLayout->addLayout(formatPresetLayout);
+
+    // Resolution Row
+    QHBoxLayout *resLayout = new QHBoxLayout();
+    m_resCombo = new QComboBox(this);
+    m_resCombo->addItem("Same as Source", QPoint(0, 0));
+    m_resCombo->addItem("3840 x 2160 (4K UHD)", QPoint(3840, 2160));
+    m_resCombo->addItem("2560 x 1440 (2K QHD)", QPoint(2560, 1440));
+    m_resCombo->addItem("1920 x 1080 (1080p Full HD)", QPoint(1920, 1080));
+    m_resCombo->addItem("1280 x 720 (720p HD)", QPoint(1280, 720));
+    m_resCombo->addItem("854 x 480 (480p SD)", QPoint(854, 480));
+    m_resCombo->addItem("640 x 360 (360p)", QPoint(640, 360));
+    m_resCombo->addItem("Custom Resolution...", QPoint(-1, -1));
+
+    m_widthSpin = new QSpinBox(this);
+    m_widthSpin->setRange(16, 7680);
+    m_widthSpin->setValue(1920);
+    m_widthSpin->setEnabled(false);
+
+    m_heightSpin = new QSpinBox(this);
+    m_heightSpin->setRange(16, 4320);
+    m_heightSpin->setValue(1080);
+    m_heightSpin->setEnabled(false);
+
+    connect(m_resCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::onResolutionChanged);
+
+    resLayout->addWidget(new QLabel("Resolution:", this));
+    resLayout->addWidget(m_resCombo);
+    resLayout->addWidget(new QLabel("Width:", this));
+    resLayout->addWidget(m_widthSpin);
+    resLayout->addWidget(new QLabel("Height:", this));
+    resLayout->addWidget(m_heightSpin);
+    transcodeLayout->addLayout(resLayout);
 
     // Progress Bar & Status
     m_progressBar = new QProgressBar(this);
@@ -106,7 +160,7 @@ void MainWindow::setupUi() {
     mainLayout->addLayout(inputLayout);
     mainLayout->addLayout(outputLayout);
     mainLayout->addWidget(inspectorGroup);
-    mainLayout->addLayout(presetLayout);
+    mainLayout->addWidget(transcodeGroup);
     mainLayout->addWidget(m_progressBar);
     mainLayout->addWidget(m_statusLabel);
     mainLayout->addLayout(btnLayout);
@@ -115,20 +169,39 @@ void MainWindow::setupUi() {
 }
 
 void MainWindow::browseInputFile() {
-    QString path = QFileDialog::getOpenFileName(this, "Select Source File", "", "Media Files (*.mp4 *.mkv *.avi *.webm *.mp3 *.m4a *.aac *.flac *.srt *.vtt);;All Files (*)");
+    QString path = QFileDialog::getOpenFileName(this, "Select Source File", "", "Media Files (*.mp4 *.mkv *.avi *.webm *.mov *.flv *.ts *.mp3 *.m4a *.aac *.flac *.wav *.srt *.vtt);;All Files (*)");
     if (!path.isEmpty()) {
         m_inputPathEdit->setText(path);
         QFileInfo info(path);
-        m_outputPathEdit->setText(info.absolutePath() + "/" + info.completeBaseName() + "_converted.mp4");
+        QString ext = m_formatCombo->currentData().toString();
+        m_outputPathEdit->setText(info.absolutePath() + "/" + info.completeBaseName() + "_converted." + ext);
         inspectFile(path);
     }
 }
 
 void MainWindow::browseOutputFile() {
-    QString path = QFileDialog::getSaveFileName(this, "Save Converted File", "", "MP4 Video (*.mp4);;MKV Video (*.mkv);;All Files (*)");
+    QString path = QFileDialog::getSaveFileName(this, "Save Converted File", "", "Media Files (*.mp4 *.mkv *.webm *.avi *.mov *.flv *.ts *.mp3 *.wav *.flac);;All Files (*)");
     if (!path.isEmpty()) {
         m_outputPathEdit->setText(path);
     }
+}
+
+void MainWindow::onFormatChanged(int index) {
+    if (!m_outputPathEdit) return;
+    QString targetExt = m_formatCombo->itemData(index).toString();
+    QString currentPath = m_outputPathEdit->text();
+    if (!currentPath.isEmpty()) {
+        QFileInfo info(currentPath);
+        QString newPath = info.absolutePath() + "/" + info.completeBaseName() + "." + targetExt;
+        m_outputPathEdit->setText(newPath);
+    }
+}
+
+void MainWindow::onResolutionChanged(int index) {
+    QPoint pt = m_resCombo->itemData(index).toPoint();
+    bool isCustom = (pt.x() == -1 && pt.y() == -1);
+    m_widthSpin->setEnabled(isCustom);
+    m_heightSpin->setEnabled(isCustom);
 }
 
 void MainWindow::inspectFile(const QString& filePath) {
@@ -329,18 +402,26 @@ void MainWindow::startConversion() {
     options.inputFilePath = m_inputPathEdit->text().toStdString();
     options.outputFilePath = m_outputPathEdit->text().toStdString();
 
-    // Default Video Options
-    options.video.enableVideo = true;
-    options.video.codecId = AV_CODEC_ID_H264;
-    options.video.bitRate = m_presetCombo->currentData().toInt();
+    QFileInfo outInfo(m_outputPathEdit->text());
+    std::string ext = outInfo.suffix().toLower().toStdString();
+    if (ext.empty()) ext = m_formatCombo->currentData().toString().toStdString();
 
-    // Default Audio Encoding Settings
-    options.audio.enableAudio = true;
-    options.audio.codecId = AV_CODEC_ID_AAC;
-    options.audio.sampleRate = 48000;
-    options.audio.channels = 2;
-    options.audio.bitRate = 192000;
-    options.audio.sampleFmt = AV_SAMPLE_FMT_FLTP;
+    Core::applyContainerDefaults(options, ext);
+
+    // Apply Resolution Settings
+    QPoint resPt = m_resCombo->currentData().toPoint();
+    if (resPt.x() > 0 && resPt.y() > 0) {
+        options.video.targetWidth = resPt.x();
+        options.video.targetHeight = resPt.y();
+    } else if (resPt.x() == -1 && resPt.y() == -1) {
+        options.video.targetWidth = m_widthSpin->value();
+        options.video.targetHeight = m_heightSpin->value();
+    } else {
+        options.video.targetWidth = 0;
+        options.video.targetHeight = 0;
+    }
+
+    options.video.bitRate = m_presetCombo->currentData().toInt();
 
     // Scan Audio Tracks
     if (m_audioCategoryItem) {

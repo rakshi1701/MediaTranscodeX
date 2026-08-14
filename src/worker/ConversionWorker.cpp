@@ -3,6 +3,7 @@
 #include "MediaDecoder.h"
 #include "MediaEncoder.h"
 #include "AudioResampler.h"
+#include "FrameScaler.h"
 #include <QDebug>
 #include <vector>
 #include <memory>
@@ -74,9 +75,26 @@ void ConversionWorker::process() {
         return;
     }
 
+    int srcW = 0, srcH = 0;
+    AVPixelFormat srcFmt = AV_PIX_FMT_NONE;
     if (hasVideo) {
-        if (m_options.video.targetWidth <= 0)  m_options.video.targetWidth = videoDecoder.getCodecContext()->width;
-        if (m_options.video.targetHeight <= 0) m_options.video.targetHeight = videoDecoder.getCodecContext()->height;
+        srcW = videoDecoder.getCodecContext()->width;
+        srcH = videoDecoder.getCodecContext()->height;
+        srcFmt = videoDecoder.getCodecContext()->pix_fmt;
+        if (m_options.video.targetWidth <= 0)  m_options.video.targetWidth = srcW;
+        if (m_options.video.targetHeight <= 0) m_options.video.targetHeight = srcH;
+    }
+
+    bool needsScaling = hasVideo && (m_options.video.targetWidth != srcW ||
+                                     m_options.video.targetHeight != srcH ||
+                                     m_options.video.pixFmt != srcFmt);
+
+    Core::FrameScaler videoScaler;
+    if (needsScaling) {
+        if (!videoScaler.init(srcW, srcH, srcFmt, m_options.video.targetWidth, m_options.video.targetHeight, m_options.video.pixFmt)) {
+            emit conversionFinished(false, "Failed to initialize video frame scaler.");
+            return;
+        }
     }
 
     // Initialize Output MediaEncoder
@@ -185,7 +203,14 @@ void ConversionWorker::process() {
             }
 
             videoDecoder.decodePacket(packet.get(), [&](AVFrame* frame) {
-                encoder.encodeVideoFrame(frame);
+                if (needsScaling) {
+                    Core::FramePtr scaledFrame = videoScaler.scaleFrame(frame);
+                    if (scaledFrame) {
+                        encoder.encodeVideoFrame(scaledFrame.get());
+                    }
+                } else {
+                    encoder.encodeVideoFrame(frame);
+                }
             });
         }
         // Primary Internal Audio Streams

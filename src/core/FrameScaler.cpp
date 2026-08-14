@@ -61,4 +61,33 @@ QImage FrameScaler::scaleToQImage(const AVFrame* srcFrame) {
     return image;
 }
 
+FramePtr FrameScaler::scaleFrame(const AVFrame* srcFrame) {
+    if (!srcFrame || !m_swsContext) return nullptr;
+
+    FramePtr dstFrame(av_frame_alloc());
+    if (!dstFrame) return nullptr;
+
+    dstFrame->width = m_dstWidth;
+    dstFrame->height = m_dstHeight;
+    dstFrame->format = m_dstFormat;
+    dstFrame->pts = srcFrame->pts;
+
+    if (av_frame_get_buffer(dstFrame.get(), 32) < 0) {
+        std::cerr << "[FrameScaler] Error: Failed to allocate destination AVFrame buffer." << std::endl;
+        return nullptr;
+    }
+
+    sws_scale(
+        m_swsContext,
+        srcFrame->data,
+        srcFrame->linesize,
+        0,
+        m_srcHeight,
+        dstFrame->data,
+        dstFrame->linesize
+    );
+
+    return dstFrame;
+}
+
 } // namespace Core
