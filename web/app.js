@@ -1,6 +1,6 @@
 // Media_TranscodeX Web - FFmpeg.wasm Engine & Client-Side Transcoder
 
-let worker = null;
+let ffmpeg = null;
 let sourceFile = null;
 let externalAudio = [];
 let externalSubtitles = [];
@@ -42,15 +42,20 @@ function log(msg, isError = false) {
     terminalLog.scrollTop = terminalLog.scrollHeight;
 }
 
-// Initialize FFmpeg WebAssembly Worker (Zero CORS restrictions)
+// Initialize FFmpeg WebAssembly Module (Zero CORS restrictions)
 async function initFFmpeg() {
-    if (worker) return true;
+    if (ffmpeg && ffmpeg.isLoaded()) return true;
     try {
         log('Loading WebAssembly core modules (FFmpeg.wasm v0.11.6)...');
         statusMessage.textContent = 'Loading WebAssembly Core...';
 
-        const { createWorker } = FFmpeg;
-        worker = createWorker({
+        if (typeof SharedArrayBuffer === 'undefined') {
+            log('⚠️ SharedArrayBuffer is disabled by your browser security policy.', true);
+            log('💡 Run "python3 server.py" in your terminal to enable Cross-Origin Isolation headers (COOP/COEP).', true);
+        }
+
+        const { createFFmpeg } = window.FFmpeg || FFmpeg;
+        ffmpeg = createFFmpeg({
             corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
             log: true,
             logger: m => {
@@ -68,7 +73,7 @@ async function initFFmpeg() {
             }
         });
 
-        await worker.load();
+        await ffmpeg.load();
 
         log('⚡ WebAssembly core successfully loaded and ready!');
         statusMessage.textContent = 'WebAssembly Engine Ready.';
@@ -294,7 +299,7 @@ startBtn.addEventListener('click', async () => {
     if (!sourceFile) return;
 
     const isLoaded = await initFFmpeg();
-    if (!isLoaded || !worker) {
+    if (!isLoaded || !ffmpeg) {
         alert('WebAssembly engine failed to load. Check browser console or network connection.');
         return;
     }
@@ -305,111 +310,183 @@ startBtn.addEventListener('click', async () => {
     statusMessage.textContent = 'Preparing virtual filesystem and loading media...';
 
     try {
-        // 1. Write Primary Source File to FFmpeg VFS
-        const inputName = `input_${sourceFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-        log(`Writing ${sourceFile.name} to WebAssembly memory...`);
-        await worker.write(inputName, new Uint8Array(await sourceFile.arrayBuffer()));
+        const { fetchFile } = window.FFmpeg || FFmpeg;
 
-        // 2. Prepare Output Extension & Options
+        // 1. Write Primary Source File to FFmpeg VFS with isolated name
+        const inputExt = sourceFile.name.split('.').pop() || 'mp4';
+        const inputVfsName = `vfs_input_source.${inputExt}`;
+        log(`Writing ${sourceFile.name} to WebAssembly memory...`);
+        ffmpeg.FS('writeFile', inputVfsName, await fetchFile(sourceFile));
+
+        // 2. Prepare Output VFS Name & Options
         const targetExt = formatSelect.value;
         const customName = (outputFileNameInput.value || 'converted_media').trim().replace(/[^a-zA-Z0-9._-]/g, '_');
-        const outputName = `${customName}.${targetExt}`;
+        const downloadFileName = `${customName}.${targetExt}`;
+        const outputVfsName = `vfs_output_converted.${targetExt}`;
 
-        const args = ['-i', inputName];
+        const args = ['-y', '-i', inputVfsName];
+
+        let currentInputIndex = 1;
+        const audioInputIndices = [];
 
         // 3. Handle External Audio Tracks
         for (let i = 0; i < externalAudio.length; i++) {
             const extAudio = externalAudio[i];
-            const extAudioName = `audio_ext_${i}_${extAudio.file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-            await worker.write(extAudioName, new Uint8Array(await extAudio.file.arrayBuffer()));
-
-            if (extAudio.delaySec > 0) {
-                args.push('-ss', extAudio.delaySec.toString());
-            }
-            args.push('-i', extAudioName);
+            const extAudioExt = extAudio.file.name.split('.').pop() || 'mp3';
+            const extAudioVfsName = `vfs_ext_audio_${i}.${extAudioExt}`;
+            ffmpeg.FS('writeFile', extAudioVfsName, await fetchFile(extAudio.file));
+            args.push('-i', extAudioVfsName);
+            audioInputIndices.push(currentInputIndex);
+            currentInputIndex++;
         }
 
         // 4. Handle External Subtitle Tracks
+        const subInputIndices = [];
         for (let j = 0; j < externalSubtitles.length; j++) {
             const extSub = externalSubtitles[j];
-            const extSubName = `sub_ext_${j}_${extSub.file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-            await worker.write(extSubName, new Uint8Array(await extSub.file.arrayBuffer()));
-            args.push('-i', extSubName);
+            const extSubExt = extSub.file.name.split('.').pop() || 'srt';
+            const extSubVfsName = `vfs_ext_sub_${j}.${extSubExt}`;
+            ffmpeg.FS('writeFile', extSubVfsName, await fetchFile(extSub.file));
+            args.push('-i', extSubVfsName);
+            subInputIndices.push(currentInputIndex);
+            currentInputIndex++;
         }
 
-        // 5. Apply Video Resolution Scaling Filter
-        let scaleFilter = '';
-        if (resSelect.value === 'custom') {
-            const w = widthInput.value || 1920;
-            const h = heightInput.value || 1080;
-            scaleFilter = `scale=${w}:${h}`;
-        } else if (resSelect.value !== 'source') {
-            const [w, h] = resSelect.value.split('x');
-            scaleFilter = `scale=${w}:${h}`;
-        }
+        // Audio & Stream Mapping Logic
+        const isAudioOnly = ['mp3', 'wav', 'flac'].includes(targetExt);
 
-        if (scaleFilter) {
-            args.push('-vf', scaleFilter);
-        }
-
-        // 6. Apply Video Bitrate & Audio Mute / Removal Logic
-        if (['mp3', 'wav', 'flac'].includes(targetExt)) {
+        if (isAudioOnly) {
             args.push('-vn'); // Audio-only extraction
+            if (targetExt === 'mp3') {
+                args.push('-c:a', 'libmp3lame', '-b:a', audioBitrateSelect.value);
+            } else if (targetExt === 'wav') {
+                args.push('-c:a', 'pcm_s16le');
+            } else if (targetExt === 'flac') {
+                args.push('-c:a', 'flac');
+            }
         } else {
-            args.push('-b:v', bitrateSelect.value);
+            // Video Codec per Container
+            if (['mp4', 'mkv', 'mov', 'ts', 'flv', 'avi'].includes(targetExt)) {
+                args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p');
+                args.push('-b:v', bitrateSelect.value);
+            } else if (targetExt === 'webm') {
+                args.push('-c:v', 'libvpx', '-b:v', bitrateSelect.value);
+            }
+
+            // Video Resolution Scaling Filter
+            let scaleFilter = '';
+            if (resSelect.value === 'custom') {
+                const w = widthInput.value || 1920;
+                const h = heightInput.value || 1080;
+                scaleFilter = `scale=${w}:${h}`;
+            } else if (resSelect.value !== 'source') {
+                const [w, h] = resSelect.value.split('x');
+                scaleFilter = `scale=${w}:${h}`;
+            }
+
+            if (scaleFilter) {
+                args.push('-vf', scaleFilter);
+            }
         }
 
-        if (muteAudioCheck.checked || (!includeOriginalAudio && externalAudio.length === 0)) {
-            args.push('-an'); // Mute / Remove All Audio
-            log('Audio stream removed (-an)');
+        // Audio Multiplexing & Mapping Logic
+        if (muteAudioCheck.checked) {
+            args.push('-an');
+            log('Audio muted / removed (-an)');
+        } else if (externalAudio.length > 0) {
+            // Build adelay filter_complex only for external tracks that have a delay offset
+            const delayFilters = [];
+            externalAudio.forEach((ea, i) => {
+                if (ea.delaySec > 0) {
+                    const delayMs = Math.round(ea.delaySec * 1000);
+                    delayFilters.push(`[${i + 1}:a]adelay=${delayMs}|${delayMs}[ea${i}]`);
+                }
+            });
+            if (delayFilters.length > 0) {
+                args.push('-filter_complex', delayFilters.join(';'));
+            }
+
+            if (!isAudioOnly) args.push('-map', '0:v:0');
+
+            if (includeOriginalAudio) {
+                args.push('-map', '0:a');  // keep original as its own audio track
+            }
+
+            // Each external audio file becomes its own separate audio track
+            externalAudio.forEach((ea, i) => {
+                if (ea.delaySec > 0) {
+                    args.push('-map', `[ea${i}]`);
+                } else {
+                    args.push('-map', `${i + 1}:a`);
+                }
+            });
+
+            args.push('-c:a', 'aac', '-b:a', audioBitrateSelect.value);
+            log(includeOriginalAudio
+                ? 'Multiplexing external audio as separate track(s) alongside original...'
+                : 'Replacing internal audio with external audio track(s)...');
         } else {
-            args.push('-b:a', audioBitrateSelect.value);
+            // Standard single video transcode
+            if (!isAudioOnly) args.push('-map', '0:v:0');
+            args.push('-map', '0:a?');
+            if (!isAudioOnly) args.push('-c:a', 'aac', '-b:a', audioBitrateSelect.value);
         }
+
+        // Subtitle Mapping
+        subInputIndices.forEach(idx => {
+            args.push('-map', `${idx}:s:0?`);
+        });
 
         // Auto-match duration if external tracks added
         if (externalAudio.length > 0) {
             args.push('-shortest');
         }
 
-        // Output file
-        args.push(outputName);
+        // Output file in VFS
+        args.push(outputVfsName);
 
         log(`Running FFmpeg WebAssembly Command: ffmpeg ${args.join(' ')}`);
         statusMessage.textContent = 'Transcoding via WebAssembly engine...';
 
         // Execute FFmpeg Transcode Command
-        await worker.run(...args);
+        await ffmpeg.run(...args);
 
-        // 7. Read Output File from VFS
+        // 7. Read Converted Output File from VFS
         log('Transcoding complete! Reading converted file from WebAssembly memory...');
-        const { data } = await worker.read(outputName);
+        const data = ffmpeg.FS('readFile', outputVfsName);
         const mimeTypes = {
             mp4: 'video/mp4', mkv: 'video/x-matroska', webm: 'video/webm',
             avi: 'video/x-msvideo', mov: 'video/quicktime', flv: 'video/x-flv',
             ts: 'video/mp2t', mp3: 'audio/mp3', wav: 'audio/wav', flac: 'audio/flac'
         };
 
-        const blob = new Blob([data.buffer], { type: mimeTypes[targetExt] || 'video/mp4' });
+        // Create Blob using Uint8Array view directly
+        const blob = new Blob([data], { type: mimeTypes[targetExt] || 'video/mp4' });
         const downloadUrl = URL.createObjectURL(blob);
 
         // Update Download Link & Filename
         downloadBtn.href = downloadUrl;
-        downloadBtn.download = outputName;
+        downloadBtn.download = downloadFileName;
         downloadBtn.style.display = 'inline-flex';
+        downloadBtn.onclick = () => {
+            log(`Downloading "${downloadFileName}"...`);
+        };
 
-        if (!['mp3', 'wav', 'flac'].includes(targetExt)) {
+        if (!isAudioOnly) {
             outputVideo.src = downloadUrl;
             outputVideo.style.display = 'block';
         }
 
         progressBarFill.style.width = '100%';
         progressText.textContent = '100%';
-        statusMessage.textContent = '🎉 Transcoding completed successfully!';
-        log(`🎉 File successfully saved as "${outputName}"! Click Download Result to save.`);
+        statusMessage.innerHTML = `🎉 Transcoding completed! <a href="${downloadUrl}" download="${downloadFileName}" style="color:var(--primary-cyan); text-decoration:underline;">Click to Download ${downloadFileName}</a>`;
+        log(`🎉 File successfully converted & saved as "${downloadFileName}"! Click Download Result button to save.`);
 
         // Cleanup VFS
-        await worker.remove(inputName);
-        await worker.remove(outputName);
+        try {
+            ffmpeg.FS('unlink', inputVfsName);
+            ffmpeg.FS('unlink', outputVfsName);
+        } catch (e) {}
 
     } catch (err) {
         log(`Transcoding error: ${err.message}`, true);
