@@ -1,69 +1,51 @@
 # 🎬 Media_TranscodeX
 
-A high-performance, cross-platform standalone video and audio conversion and stream multiplexing utility built using **Modern C++17**, **FFmpeg C APIs**, and the **Qt 6 GUI framework**.
+A high-performance, standalone video/audio transoder, format converter, and multi-track stream multiplexing desktop application built using **Modern C++17**, **FFmpeg C APIs**, and **Qt 6**.
 
-This project features low-level raw frame manipulation, advanced C++ Resource Acquisition Is Initialization (RAII) memory management patterns, sample-accurate audio buffering, and asynchronous multithreading for smooth media processing.
-
----
-
-## ✨ Key Features
-
-* ⚡ **Asynchronous Encoding Engine:** Transcoding and stream multiplexing run on a dedicated background `QThread`, keeping the GUI 100% responsive during intensive jobs.
-* 📦 **Multi-Format Container Conversion:** Export videos to **MP4, MKV, WebM, AVI, QuickTime MOV, Flash FLV, MPEG-TS**, or extract audio to **MP3, WAV, FLAC**.
-* 🎨 **Resolution Scaling & Color Conversion:** High-speed `libswscale` frame scaling with support for resolution presets (4K UHD, 2K QHD, 1080p, 720p, 480p, 360p) or custom Width/Height pixel dimensions.
-* 🎵 **Multi-Track Stream Management:** Inspect container streams and interactively enable/disable internal tracks or multiplex external audio (`.mp3`, `.wav`, `.aac`, `.flac`, etc.) and subtitle files (`.srt`, `.vtt`, `.ass`).
-* 🔊 **Fixed-Size Audio Buffering (`AVAudioFifo`):** Integrates `AVAudioFifo` and `libswresample` to buffer variable sample frames into fixed-size 1024-sample AAC blocks, preventing audio distortion or silent output.
-* ⏱️ **Audio Timing & Duration Controls:** Precise audio start timestamp offsets (`av_seek_frame`) and automatic duration matching to align external audio length perfectly with the main video.
-* 🛡️ **Modern C++ RAII Wrappers:** Native C-style FFmpeg allocations (`AVFrame`, `AVPacket`, `AVFormatContext`, `AVAudioFifo`, etc.) are managed via custom `std::unique_ptr` deleters to prevent memory leaks.
-* 📊 **Real-Time Telemetry & Progress:** Signals and slots deliver frame-accurate PTS percentage updates directly to UI progress bars.
-* ⏹️ **User Cancellation Control:** Cancel ongoing encoding jobs cleanly mid-stream with safe thread cleanup and file context flushing.
+Media_TranscodeX provides low-level raw frame decoding, hardware-accelerated color/resolution scaling, sample-accurate audio frame buffering (`AVAudioFifo`), interactive track stream management, and non-blocking asynchronous multithreading.
 
 ---
 
-## 📊 Project Status & Progress Tracker
+## 🏗️ System Architecture & Engineering Design
 
-* **Current Status:** Sprints 1–7 Complete ✅ 🚀
-
-| Sprint / Feature | Description / Goal | Status | Key Milestones |
-| :--- | :--- | :---: | :--- |
-| **Sprint 1** | **Environment & Build Setup** | ✅ Completed | • Integrated CMake build configuration with Qt 6 & FFmpeg C libraries.<br>• Verified C++17 build targets and project directory structure. |
-| **Sprint 2** | **RAII Memory Management & Demuxing** | ✅ Completed | • Implemented C++ RAII smart pointer deleters for FFmpeg contexts.<br>• Created `MediaDemuxer` class to safely inspect containers and extract stream metadata. |
-| **Sprint 3** | **Decoding Pipeline & Frame Access** | ✅ Completed | • Built `MediaDecoder` using `avcodec_send_packet()` and `avcodec_receive_frame()`.<br>• Implemented decoder flushing for end-of-stream leftover frames. |
-| **Sprint 4** | **Frame Scaling & Color Conversion** | ✅ Completed | • Integrated `libswscale` inside custom `FrameScaler` engine.<br>• Added hardware YUV to RGB24 color space pixel conversion and frame scaling. |
-| **Sprint 5** | **Encoding Pipeline & Muxing** | ✅ Completed | • Implemented `MediaEncoder` to allocate output container contexts and codecs.<br>• Handled timestamp rescaling (`av_packet_rescale_ts`) and container trailer flushing. |
-| **Sprint 6** | **Multi-Track Stream Management** | ✅ Completed | • Built interactive tree manager to inspect/toggle internal video, audio, and subtitle streams.<br>• Added support for multiplexing external audio and subtitle files into output containers. |
-| **Sprint 7** | **Audio FIFO Fix & Custom Formats/Scaling** | ✅ Completed | • Integrated `AVAudioFifo` buffering to resolve AAC variable sample size encoding bugs.<br>• Added external audio start offset and video duration auto-matching.<br>• Added container format selector (MP4, MKV, WEBM, AVI, MOV, FLV, TS, MP3, WAV) and custom resolution controls. |
-
----
-
-## 🛠️ System Architecture
-
-The application uses a decoupled multi-tier architecture:
+The application is engineered using a clean, decoupled 3-tier system architecture:
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          LAYER 1: QT 6 FRONTEND                         │
-│   (MainWindow, Stream Manager, Container & Resolution Options, GUI)    │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ Qt Signals / Slots
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    LAYER 2: ASYNCHRONOUS WORKER                         │
-│        (QThread Controller, Job Orchestrator, Multi-Pipeline Muxing)   │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ C++ Function Calls
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     LAYER 3: FFMPEG ENGINE (C++)                        │
-│   ┌──────────────────────┐  ┌──────────────────┐  ┌─────────────────┐   │
-│   │ Smart Pointer RAII   │  │ MediaDemuxer /   │  │ MediaEncoder /  │   │
-│   │ Wrappers (AVFrame)   │  │ MediaDecoder     │  │ AVAudioFifo     │   │
-│   └──────────────────────┘  └──────────────────┘  └─────────────────┘   │
-│   ┌──────────────────────┐  ┌──────────────────┐                        │
-│   │ AudioResampler       │  │ FrameScaler      │                        │
-│   │ (libswresample)      │  │ (libswscale)     │                        │
-│   └──────────────────────┘  └──────────────────┘                        │
-└─────────────────────────────────────────────────────────────────────────┘
+===================================================================================
+                       LAYER 1: QT 6 GRAPHICAL USER INTERFACE
+===================================================================================
+ [MainWindow]
+  ├── Media Stream Inspector & Track Tree Manager
+  ├── Output Container Format Selector (.mp4, .mkv, .webm, .avi, .mov, .flv, .ts, .mp3, .wav, .flac)
+  ├── Resolution Preset Selector (4K, 2K, 1080p, 720p, 480p, 360p) & Custom Width/Height
+  ├── External Track Addition (Audio: MP3/WAV/AAC; Subtitle: SRT/VTT/ASS)
+  └── Telemetry, Progress Bar & Non-blocking User Controls
+                                    │
+                        Qt Signals / Slots (Thread-Safe)
+                                    ▼
+===================================================================================
+                 LAYER 2: ASYNCHRONOUS THREADING & WORKER ORCHESTRATION
+===================================================================================
+ [ConversionWorker] (Runs inside dedicated QThread)
+  ├── Primary Container Demuxer & Demux Loop
+  ├── Secondary Demuxers for External Audio & Subtitle Files
+  ├── Timestamp Offset Seeking (av_seek_frame) for Audio Start Delay
+  ├── Duration Trimming & Cap Matching to Primary Video Length
+  └── Progress Calculation & Error Reporting Signals
+                                    │
+                          C++ Direct Function Calls
+                                    ▼
+===================================================================================
+                    LAYER 3: PURE C++ FFMPEG CORE ENGINE (0 Qt Dependencies)
+===================================================================================
+ [RAIIWrappers.h]       → Smart pointer deleters (AVFrame, AVPacket, AVFormatContext, AVAudioFifo)
+ [TranscodeOptions.h]   → Unified transcode settings & container format default codecs
+ [MediaDemuxer]         → Container probing, metadata extraction, stream discovery
+ [MediaDecoder]         → Video/Audio packet decoding (avcodec_send_packet / avcodec_receive_frame)
+ [AudioResampler]       → Audio format, sample rate & planar channel layout conversion (libswresample)
+ [FrameScaler]          → Video resolution scaling & color conversion (libswscale)
+ [MediaEncoder]         → AVAudioFifo 1024-sample frame buffering, H.264/VP9/AAC encoding & container muxing
+===================================================================================
 ```
 
 ---
@@ -72,43 +54,102 @@ The application uses a decoupled multi-tier architecture:
 
 ```text
 Media_TranscodeX/
-├── CMakeLists.txt             # Cross-platform build configuration
-├── README.md                  # Project documentation
-├── src/
-│   ├── core/                  # Pure C++ FFmpeg Engine
-│   │   ├── RAIIWrappers.h     # Modern C++ smart pointer deleters (std::unique_ptr)
-│   │   ├── TranscodeOptions.h # Unified transcode settings & container format defaults
-│   │   ├── MediaDemuxer.h/.cpp# Demuxer engine & metadata extraction
-│   │   ├── MediaDecoder.h/.cpp# Frame decoding pipeline
-│   │   ├── MediaEncoder.h/.cpp# Frame encoding, container muxing & AVAudioFifo
-│   │   ├── AudioResampler.h/.cpp # Audio sample rate/format conversion
-│   │   └── FrameScaler.h/.cpp # Color space conversion & resolution frame scaling
-│   ├── worker/                # Qt Threading & Orchestration
-│   │   └── ConversionWorker.h/.cpp # Background worker task for multi-track processing
-│   └── gui/                   # Qt User Interface
-│       ├── main.cpp           # Application entry point
-│       └── MainWindow.h/.cpp  # Desktop application dashboard & stream manager
-└── tests/                     # Unit tests for core engine
+├── CMakeLists.txt               # Cross-platform CMake 3.16+ configuration file
+├── README.md                    # Project documentation & architecture guide
+├── Project_plan.md              # Feature development roadmap & sprint history
+├── config.txt                   # Workspace configuration settings
+└── src/
+    ├── core/                    # Pure C++ FFmpeg Processing Engine (No Qt dependencies)
+    │   ├── RAIIWrappers.h       # C++17 smart pointer deleters (std::unique_ptr) for FFmpeg structs
+    │   ├── TranscodeOptions.h   # Transcode options struct & container codec auto-configuration
+    │   ├── MediaDemuxer.h       # Header for container demuxing & stream inspection
+    │   ├── MediaDemuxer.cpp     # Demuxer implementation (avformat_open_input, avfind_best_stream)
+    │   ├── MediaDecoder.h       # Header for video/audio decoding
+    │   ├── MediaDecoder.cpp     # Decoder implementation (avcodec_send_packet, avcodec_receive_frame)
+    │   ├── MediaEncoder.h       # Header for encoding, container muxing & AVAudioFifo buffering
+    │   ├── MediaEncoder.cpp     # Encoder implementation (avformat_write_header, AVAudioFifo, av_interleaved_write_frame)
+    │   ├── AudioResampler.h     # Header for audio resampling & format conversion
+    │   ├── AudioResampler.cpp   # Audio resampler implementation (SwrContext, swr_convert)
+    │   ├── FrameScaler.h        # Header for video frame scaling & color space conversion
+    │   └── FrameScaler.cpp      # Frame scaler implementation (SwsContext, sws_scale)
+    ├── worker/                  # Asynchronous Multithreaded Execution Layer
+    │   ├── ConversionWorker.h   # QThread worker header emitting progress & status signals
+    │   └── ConversionWorker.cpp # Multi-track demux, decode, scale, resample & mux pipeline
+    └── gui/                     # Desktop User Interface Layer (Qt 6 Widget Framework)
+        ├── main.cpp             # Application entry point & Qt main event loop
+        ├── MainWindow.h         # Main desktop dashboard header & UI layout slots
+        └── MainWindow.cpp       # Desktop UI implementation, track manager tree & transcode controls
 ```
+
+---
+
+## ✨ Core Features & Technical Highlights
+
+### 1. Fixed-Size Audio Frame Buffering (`AVAudioFifo`)
+High-quality audio encoders like **AAC** require fixed frame sizes (typically **1024 samples** per frame). Input audio decoders and resamplers frequently yield variable frame sizes (e.g. 1152, 2048, or 4096 samples). 
+- `MediaEncoder` incorporates FFmpeg's `AVAudioFifo` buffer to queue incoming samples.
+- Audio is read out in exact 1024-sample blocks before being dispatched to `avcodec_send_frame()`.
+- Flushes remaining leftover samples on stream closure to prevent silent audio output or packet drop errors.
+
+### 2. Multi-Track Stream Management & External Track Multiplexing
+- **Tree Inspector:** Probes container format metadata, duration, video resolution, frame rates, and all internal audio/subtitle tracks.
+- **Selective Track Enable/Disable:** Checkboxes allow users to selectively exclude unwanted audio or subtitle tracks from the converted output.
+- **External Track Injection:** Add external audio files (`.mp3`, `.wav`, `.aac`, `.flac`, `.ogg`) and subtitle files (`.srt`, `.vtt`, `.ass`) directly into the output container.
+
+### 3. Audio Timing Offset & Duration Trimming
+- **Start Time Offset:** Specify start delays (`startTimeSec`) for external audio tracks; `ConversionWorker` uses `av_seek_frame()` to start reading audio at the desired offset.
+- **Auto Video Length Matching:** External audio processing automatically stops when it reaches the main video file's total duration ($X$ seconds) to prevent out-of-sync playback.
+
+### 4. Custom Output Container Formats & Smart Codec Mapping
+Supports converting to a wide variety of output container formats:
+- **Video Containers:** MP4 (`.mp4`), Matroska (`.mkv`), WebM (`.webm`), AVI (`.avi`), QuickTime (`.mov`), Flash Video (`.flv`), MPEG-TS (`.ts`).
+- **Audio-Only Containers:** MP3 (`.mp3`), WAV (`.wav`), FLAC (`.flac`).
+- **Smart Codec Mapping:** Automatically configures optimal default video and audio codecs per container (e.g., H.264/AAC for MP4, VP9/OPUS for WebM, MPEG4/MP3 for AVI, PCM for WAV).
+
+### 5. Resolution Scaling & Pixel Format Conversion
+- **Resolution Selector:** Choose from standard resolution presets:
+  - `3840 x 2160` (4K UHD)
+  - `2560 x 1440` (2K QHD)
+  - `1920 x 1080` (1080p Full HD)
+  - `1280 x 720` (720p HD)
+  - `854 x 480` (480p SD)
+  - `640 x 360` (360p)
+  - `Custom Resolution...` (Enables custom Width and Height spinbox inputs)
+- **`FrameScaler` Engine:** Utilizes `libswscale` to perform high-speed bilinear pixel scaling and color space conversion (YUV420P).
 
 ---
 
 ## 📋 Prerequisites & Dependencies
 
-To compile and run **Media_TranscodeX**, ensure your host machine has:
+To build and run **Media_TranscodeX**, ensure your Linux host environment has the following installed:
 
 * **OS:** Linux (Ubuntu 20.04+ / Debian 11+ recommended)
-* **Compiler:** C++17 compliant compiler (`g++` or `clang++`)
+* **Compiler:** C++17 compliant compiler (`g++` v9+ or `clang++` v10+)
 * **Build System:** CMake (v3.16+)
 * **Libraries:**
-  * Qt 6 (`qt6-base-dev`)
-  * FFmpeg Development Libraries (`libavcodec-dev`, `libavformat-dev`, `libavutil-dev`, `libswscale-dev`, `libswresample-dev`)
+  * **Qt 6 Framework:** `qt6-base-dev`
+  * **FFmpeg Libraries:** `libavcodec-dev`, `libavformat-dev`, `libavutil-dev`, `libswscale-dev`, `libswresample-dev`
+
+### Installing Dependencies on Ubuntu / Debian
+
+```bash
+sudo apt update
+sudo apt install -y \
+    build-essential \
+    cmake \
+    qt6-base-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev
+```
 
 ---
 
-## 💻 Build & Execution Instructions
+## 💻 Build & Execution Guide
 
-### 1. Build the Application
+### 1. Clone & Build
 
 ```bash
 # Clone the repository
@@ -119,11 +160,11 @@ cd Media_TranscodeX
 mkdir -p build && cd build
 cmake ..
 
-# Compile using all CPU cores
-make -j$(nproc)
+# Build binary using all CPU cores
+cmake --build . -j$(nproc)
 ```
 
-### 2. Run the Application
+### 2. Launch Application
 
 ```bash
 ./Media_TranscodeX
