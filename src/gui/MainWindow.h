@@ -8,8 +8,11 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QThread>
+#include <QTreeWidget>
+#include <QHeaderView>
 
 #include "ConversionWorker.h"
+#include "MediaDemuxer.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -23,6 +26,7 @@ private slots:
     void browseOutputFile();
     void startConversion();
     void cancelConversion();
+    void inspectFile(const QString& filePath);
 
     void onProgressUpdated(int percentage);
     void onStatusMessage(const QString& message);
@@ -38,6 +42,7 @@ private:
     QLabel *m_statusLabel = nullptr;
     QPushButton *m_startBtn = nullptr;
     QPushButton *m_cancelBtn = nullptr;
+    QTreeWidget *m_infoTree = nullptr;
 
     QThread *m_workerThread = nullptr;
     Worker::ConversionWorker *m_worker = nullptr;

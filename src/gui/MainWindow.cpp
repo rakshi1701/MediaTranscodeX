@@ -4,6 +4,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QFileInfo>
+#include <QGroupBox>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupUi();
@@ -17,8 +18,8 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::setupUi() {
-    setWindowTitle("Media_TranscodeX - Desktop Media Converter");
-    resize(600, 350);
+    setWindowTitle("Media_TranscodeX - Desktop Media Converter & Inspector");
+    resize(750, 600);
 
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
@@ -29,6 +30,9 @@ void MainWindow::setupUi() {
     m_inputPathEdit->setPlaceholderText("Select source video/audio file...");
     QPushButton *browseInputBtn = new QPushButton("Browse...", this);
     connect(browseInputBtn, &QPushButton::clicked, this, &MainWindow::browseInputFile);
+    connect(m_inputPathEdit, &QLineEdit::editingFinished, this, [this]() {
+        inspectFile(m_inputPathEdit->text());
+    });
     inputLayout->addWidget(new QLabel("Source File:", this));
     inputLayout->addWidget(m_inputPathEdit);
     inputLayout->addWidget(browseInputBtn);
@@ -42,6 +46,15 @@ void MainWindow::setupUi() {
     outputLayout->addWidget(new QLabel("Output File:", this));
     outputLayout->addWidget(m_outputPathEdit);
     outputLayout->addWidget(browseOutputBtn);
+
+    // Media Inspector Section
+    QGroupBox *inspectorGroup = new QGroupBox("🔍 Media Streams & Metadata Inspector", this);
+    QVBoxLayout *inspectorLayout = new QVBoxLayout(inspectorGroup);
+    m_infoTree = new QTreeWidget(this);
+    m_infoTree->setHeaderLabels({"Property / Track", "Value / Details"});
+    m_infoTree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_infoTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    inspectorLayout->addWidget(m_infoTree);
 
     // Preset Options
     QHBoxLayout *presetLayout = new QHBoxLayout();
@@ -57,7 +70,7 @@ void MainWindow::setupUi() {
     m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
 
-    m_statusLabel = new QLabel("Ready.", this);
+    m_statusLabel = new QLabel("Ready. Select a file to inspect metadata and tracks.", this);
     m_statusLabel->setAlignment(Qt::AlignCenter);
 
     // Action Buttons
@@ -75,6 +88,7 @@ void MainWindow::setupUi() {
     // Assemble Layout
     mainLayout->addLayout(inputLayout);
     mainLayout->addLayout(outputLayout);
+    mainLayout->addWidget(inspectorGroup);
     mainLayout->addLayout(presetLayout);
     mainLayout->addWidget(m_progressBar);
     mainLayout->addWidget(m_statusLabel);
@@ -84,54 +98,126 @@ void MainWindow::setupUi() {
 }
 
 void MainWindow::browseInputFile() {
-    QString path = QFileDialog::getOpenFileName(this, "Select Source File", "", "Media Files (*.mp4 *.mkv *.avi *.webm *.mp3);;All Files (*)");
+    QString path = QFileDialog::getOpenFileName(this, "Select Source File", "", "Media Files (*.mp4 *.mkv *.avi *.webm *.mp3 *.m4a *.aac *.flac *.srt *.vtt);;All Files (*)");
     if (!path.isEmpty()) {
         m_inputPathEdit->setText(path);
         QFileInfo info(path);
         m_outputPathEdit->setText(info.absolutePath() + "/" + info.completeBaseName() + "_converted.mp4");
+        inspectFile(path);
     }
 }
 
 void MainWindow::browseOutputFile() {
-    QString path = QFileDialog::getSaveFileName(this, "Save Converted File", "", "MP4 Video (*.mp4);;All Files (*)");
+    QString path = QFileDialog::getSaveFileName(this, "Save Converted File", "", "MP4 Video (*.mp4);;MKV Video (*.mkv);;All Files (*)");
     if (!path.isEmpty()) {
         m_outputPathEdit->setText(path);
     }
 }
 
-// void MainWindow::startConversion() {
-//     if (m_inputPathEdit->text().isEmpty() || m_outputPathEdit->text().isEmpty()) {
-//         QMessageBox::warning(this, "Missing Path", "Please select valid input and output file paths.");
-//         return;
-//     }
+void MainWindow::inspectFile(const QString& filePath) {
+    m_infoTree->clear();
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+        return;
+    }
 
-//     Worker::ConversionJob job;
-//     job.inputPath = m_inputPathEdit->text();
-//     job.outputPath = m_outputPathEdit->text();
-//     job.bitRate = m_presetCombo->currentData().toInt();
+    Core::MediaDemuxer demuxer;
+    if (!demuxer.openFile(filePath.toStdString())) {
+        QTreeWidgetItem *errItem = new QTreeWidgetItem(m_infoTree);
+        errItem->setText(0, "Error");
+        errItem->setText(1, "Unable to parse media container.");
+        return;
+    }
 
-//     m_workerThread = new QThread(this);
-//     m_worker = new Worker::ConversionWorker(job);
-//     m_worker->moveToThread(m_workerThread);
+    const Core::MediaInfo& info = demuxer.getInfo();
 
-//     // Thread Wiring
-//     connect(m_workerThread, &QThread::started, m_worker, &Worker::ConversionWorker::process);
-//     connect(m_worker, &Worker::ConversionWorker::progressUpdated, this, &MainWindow::onProgressUpdated);
-//     connect(m_worker, &Worker::ConversionWorker::statusMessage, this, &MainWindow::onStatusMessage);
-//     connect(m_worker, &Worker::ConversionWorker::conversionFinished, this, &MainWindow::onConversionFinished);
+    auto addProp = [](QTreeWidgetItem* parent, const QString& name, const QString& val) {
+        QTreeWidgetItem *item = new QTreeWidgetItem(parent);
+        item->setText(0, name);
+        item->setText(1, val);
+    };
 
-//     // Cleanup wiring
-//     connect(m_worker, &Worker::ConversionWorker::conversionFinished, m_workerThread, &QThread::quit);
-//     connect(m_worker, &Worker::ConversionWorker::conversionFinished, m_worker, &QObject::deleteLater);
-//     connect(m_workerThread, &QThread::finished, m_workerThread, &QObject::deleteLater);
+    // 1. Container & General Info
+    QTreeWidgetItem *containerCategory = new QTreeWidgetItem(m_infoTree);
+    containerCategory->setText(0, "📁 Container Info");
+    containerCategory->setExpanded(true);
 
-//     m_startBtn->setEnabled(false);
-//     m_cancelBtn->setEnabled(true);
-//     m_progressBar->setValue(0);
+    addProp(containerCategory, "Format", QString::fromStdString(info.formatName + " (" + info.formatLongName + ")"));
+    addProp(containerCategory, "Duration", QString("%1 sec").arg(info.durationSeconds, 0, 'f', 2));
+    if (info.bitRate > 0) {
+        addProp(containerCategory, "Overall Bitrate", QString("%1 kbps").arg(info.bitRate / 1000));
+    }
 
-//     m_workerThread->start();
-// }
+    // 2. Metadata Tags (Description, Title, Artist, etc.)
+    if (!info.metadataTags.empty()) {
+        QTreeWidgetItem *tagsCategory = new QTreeWidgetItem(m_infoTree);
+        tagsCategory->setText(0, "🏷️ Description & Tags");
+        tagsCategory->setExpanded(true);
 
+        for (const auto& pair : info.metadataTags) {
+            addProp(tagsCategory, QString::fromStdString(pair.first), QString::fromStdString(pair.second));
+        }
+    }
+
+    // 3. Video Streams
+    if (!info.videoTracks.empty()) {
+        QTreeWidgetItem *videoCategory = new QTreeWidgetItem(m_infoTree);
+        videoCategory->setText(0, QString("🎬 Video Tracks (%1)").arg(info.videoTracks.size()));
+        videoCategory->setExpanded(true);
+
+        for (const auto& v : info.videoTracks) {
+            QTreeWidgetItem *vTrack = new QTreeWidgetItem(videoCategory);
+            vTrack->setText(0, QString("Stream #%1").arg(v.index));
+            vTrack->setText(1, QString::fromStdString(v.codecName + " (" + v.codecLongName + ")"));
+            vTrack->setExpanded(true);
+
+            addProp(vTrack, "Resolution", QString("%1x%2").arg(v.width).arg(v.height));
+            if (v.fps > 0) addProp(vTrack, "Frame Rate", QString("%1 fps").arg(v.fps, 0, 'f', 2));
+            addProp(vTrack, "Pixel Format", QString::fromStdString(v.pixelFormat));
+            if (v.bitRate > 0) addProp(vTrack, "Bitrate", QString("%1 kbps").arg(v.bitRate / 1000));
+            if (!v.language.empty()) addProp(vTrack, "Language", QString::fromStdString(v.language));
+            if (!v.title.empty()) addProp(vTrack, "Title", QString::fromStdString(v.title));
+        }
+    }
+
+    // 4. Audio Streams
+    if (!info.audioTracks.empty()) {
+        QTreeWidgetItem *audioCategory = new QTreeWidgetItem(m_infoTree);
+        audioCategory->setText(0, QString("🎵 Audio Tracks (%1)").arg(info.audioTracks.size()));
+        audioCategory->setExpanded(true);
+
+        for (const auto& a : info.audioTracks) {
+            QTreeWidgetItem *aTrack = new QTreeWidgetItem(audioCategory);
+            aTrack->setText(0, QString("Stream #%1").arg(a.index));
+            aTrack->setText(1, QString::fromStdString(a.codecName + " (" + a.codecLongName + ")"));
+            aTrack->setExpanded(true);
+
+            addProp(aTrack, "Channels", QString("%1 ch").arg(a.channels));
+            addProp(aTrack, "Sample Rate", QString("%1 Hz").arg(a.sampleRate));
+            if (a.bitRate > 0) addProp(aTrack, "Bitrate", QString("%1 kbps").arg(a.bitRate / 1000));
+            if (!a.language.empty()) addProp(aTrack, "Language", QString::fromStdString(a.language));
+            if (!a.title.empty()) addProp(aTrack, "Title", QString::fromStdString(a.title));
+        }
+    }
+
+    // 5. Subtitle Streams
+    if (!info.subtitleTracks.empty()) {
+        QTreeWidgetItem *subCategory = new QTreeWidgetItem(m_infoTree);
+        subCategory->setText(0, QString("💬 Subtitle Tracks (%1)").arg(info.subtitleTracks.size()));
+        subCategory->setExpanded(true);
+
+        for (const auto& s : info.subtitleTracks) {
+            QTreeWidgetItem *sTrack = new QTreeWidgetItem(m_infoTree);
+            sTrack->setText(0, QString("Stream #%1").arg(s.index));
+            sTrack->setText(1, QString::fromStdString(s.codecName + " (" + s.codecLongName + ")"));
+            sTrack->setExpanded(true);
+
+            if (!s.language.empty()) addProp(sTrack, "Language", QString::fromStdString(s.language));
+            if (!s.title.empty()) addProp(sTrack, "Title", QString::fromStdString(s.title));
+            if (s.isDefault) addProp(sTrack, "Default Flag", "Yes");
+            if (s.isForced) addProp(sTrack, "Forced Flag", "Yes");
+        }
+    }
+}
 
 void MainWindow::startConversion() {
     if (m_inputPathEdit->text().isEmpty() || m_outputPathEdit->text().isEmpty()) {
