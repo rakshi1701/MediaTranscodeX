@@ -112,7 +112,7 @@ bool MediaDemuxer::openFile(const std::string& filePath) {
             aInfo.codecName = codecName;
             aInfo.codecLongName = codecLongName;
             aInfo.sampleRate = st->codecpar->sample_rate;
-            aInfo.channels = st->codecpar->channels;
+            aInfo.channels = Core::Compat::getChannels(st->codecpar);
             aInfo.bitRate = static_cast<int>(st->codecpar->bit_rate);
             aInfo.language = lang;
             aInfo.title = title;

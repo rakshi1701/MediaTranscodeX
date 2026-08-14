@@ -66,8 +66,7 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t n
                 aState.codecCtx->sample_rate = options.audio.sampleRate;
                 aState.codecCtx->sample_fmt = options.audio.sampleFmt;
                 aState.codecCtx->bit_rate = options.audio.bitRate;
-                aState.codecCtx->channel_layout = av_get_default_channel_layout(options.audio.channels);
-                aState.codecCtx->channels = options.audio.channels;
+                Core::Compat::setAudioLayout(aState.codecCtx, options.audio.channels);
                 
                 aState.codecCtx->time_base = AVRational{1, options.audio.sampleRate};
                 aState.stream->time_base = aState.codecCtx->time_base;
@@ -81,7 +80,7 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t n
                     return false;
                 }
 
-                aState.fifo = av_audio_fifo_alloc(aState.codecCtx->sample_fmt, aState.codecCtx->channels, 1);
+                aState.fifo = av_audio_fifo_alloc(aState.codecCtx->sample_fmt, Core::Compat::getChannels(aState.codecCtx), 1);
                 if (!aState.fifo) {
                     std::cerr << "[MediaEncoder] Error: Could not allocate AVAudioFifo for track " << i << std::endl;
                     return false;
@@ -172,8 +171,7 @@ bool MediaEncoder::encodeAudioFrame(size_t trackIdx, AVFrame* frame) {
         FramePtr encFrame(av_frame_alloc());
         encFrame->nb_samples = frameSize;
         encFrame->format = aState.codecCtx->sample_fmt;
-        encFrame->channel_layout = aState.codecCtx->channel_layout;
-        encFrame->channels = aState.codecCtx->channels;
+        Core::Compat::setFrameAudioLayout(encFrame.get(), aState.codecCtx);
         encFrame->sample_rate = aState.codecCtx->sample_rate;
         encFrame->pts = aState.nextPts;
         aState.nextPts += frameSize;
@@ -233,8 +231,7 @@ bool MediaEncoder::finish() {
             FramePtr encFrame(av_frame_alloc());
             encFrame->nb_samples = remaining;
             encFrame->format = aState.codecCtx->sample_fmt;
-            encFrame->channel_layout = aState.codecCtx->channel_layout;
-            encFrame->channels = aState.codecCtx->channels;
+            Core::Compat::setFrameAudioLayout(encFrame.get(), aState.codecCtx);
             encFrame->sample_rate = aState.codecCtx->sample_rate;
             encFrame->pts = aState.nextPts;
             aState.nextPts += remaining;

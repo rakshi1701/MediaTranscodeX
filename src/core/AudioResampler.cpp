@@ -61,7 +61,7 @@ FramePtr AudioResampler::resampleFrame(const AVFrame* inFrame) {
 
     outFrame->sample_rate = m_outSampleRate;
     outFrame->format = m_outFormat;
-    outFrame->channel_layout = m_outChannelLayout;
+    Core::Compat::setFrameAudioLayoutMask(outFrame.get(), m_outChannelLayout);
     outFrame->nb_samples = outSamples;
 
     if (av_frame_get_buffer(outFrame.get(), 0) < 0) {

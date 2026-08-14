@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media_TranscodeX Web - Desktop-Grade WebAssembly Converter</title>
+    
+    <!-- Cross-Origin Isolation Service Worker for SharedArrayBuffer -->
+    <script src="coi-serviceworker.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- FFmpeg.wasm UMD Bundles -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+</head>
+<body>
+
+    <div class="app-container">
+        <!-- Header Navbar -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="brand-logo">🎬</div>
+                <div class="brand-text">
+                    <h1>Media_TranscodeX Web</h1>
+                    <p>WebAssembly Video Transcoder, Format Converter & Track Multiplexer</p>
+                </div>
+            </div>
+            <div class="badge-wasm">
+                <span class="pulse-dot"></span>
+                WebAssembly Client-Side Engine
+            </div>
+        </header>
+
+        <!-- Main Workspace Grid -->
+        <main class="main-grid">
+            
+            <!-- Left Column: File Input, Inspector & Options -->
+            <section class="card">
+                <div class="card-title">
+                    <span>📁</span> Source File & Stream Inspector
+                </div>
+
+                <!-- Dropzone -->
+                <div class="dropzone" id="dropzone">
+                    <div class="dropzone-icon">📥</div>
+                    <h3>Drag & Drop Source Media File Here</h3>
+                    <p>Supports MP4, MKV, AVI, WebM, MOV, FLV, TS, MP3, WAV, FLAC</p>
+                    <button class="btn btn-secondary" style="margin-top: 8px;">Browse Files...</button>
+                    <input type="file" id="fileInput" accept="video/*,audio/*" style="display: none;">
+                </div>
+
+                <!-- Media Inspector Tree -->
+                <div class="form-group">
+                    <label>🔍 Media Stream Metadata Inspector</label>
+                    <div class="info-tree" id="infoTree">
+                        <div class="tree-item">
+                            <span class="tree-key">Status:</span>
+                            <span class="tree-val">No media file loaded</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transcode & Output Options -->
+                <div class="card-title" style="margin-top: 10px;">
+                    <span>⚙️</span> Transcode & Output Settings
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="formatSelect">Container Format:</label>
+                        <select id="formatSelect">
+                            <option value="mp4">MP4 Video (.mp4)</option>
+                            <option value="mkv">MKV Video (.mkv)</option>
+                            <option value="webm">WebM Video (.webm)</option>
+                            <option value="avi">AVI Video (.avi)</option>
+                            <option value="mov">QuickTime MOV (.mov)</option>
+                            <option value="flv">Flash FLV (.flv)</option>
+                            <option value="ts">MPEG-TS (.ts)</option>
+                            <option value="mp3">MP3 Audio Only (.mp3)</option>
+                            <option value="wav">WAV Audio Only (.wav)</option>
+                            <option value="flac">FLAC Audio Only (.flac)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bitrateSelect">Video Bitrate:</label>
+                        <select id="bitrateSelect">
+                            <option value="4M">High Quality (4 Mbps)</option>
+                            <option value="2M" selected>Standard Quality (2 Mbps)</option>
+                            <option value="1M">Low Bitrate (1 Mbps)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="resSelect">Resolution Preset:</label>
+                        <select id="resSelect">
+                            <option value="source" selected>Same as Source</option>
+                            <option value="3840x2160">3840 x 2160 (4K UHD)</option>
+                            <option value="2560x1440">2560 x 1440 (2K QHD)</option>
+                            <option value="1920x1080">1920 x 1080 (1080p Full HD)</option>
+                            <option value="1280x720">1280 x 720 (720p HD)</option>
+                            <option value="854x480">854 x 480 (480p SD)</option>
+                            <option value="640x360">640 x 360 (360p)</option>
+                            <option value="custom">Custom Resolution...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="customResGroup" style="display: none;">
+                        <label>Custom Dimensions (WxH):</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="number" id="widthInput" placeholder="Width" value="1920" min="16" max="7680">
+                            <input type="number" id="heightInput" placeholder="Height" value="1080" min="16" max="4320">
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- Right Column: Track Manager, Telemetry & Progress -->
+            <section class="card">
+                <div class="card-title">
+                    <span>🎵</span> Track Manager & External Multiplexing
+                </div>
+
+                <!-- Track List -->
+                <div class="track-list" id="trackList">
+                    <div class="track-card">
+                        <div class="track-info">
+                            <span class="track-badge badge-video">VIDEO</span>
+                            <span>Primary Video Stream</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Add Track Buttons -->
+                <div style="display: flex; gap: 12px; margin-top: 4px;">
+                    <button class="btn btn-secondary" id="addAudioBtn" style="flex: 1;">➕ Add External Audio...</button>
+                    <button class="btn btn-secondary" id="addSubBtn" style="flex: 1;">➕ Add Subtitle Track...</button>
+                    <input type="file" id="audioFileInput" accept="audio/*" style="display: none;">
+                    <input type="file" id="subFileInput" accept=".srt,.vtt,.ass" style="display: none;">
+                </div>
+
+                <!-- Progress & Telemetry -->
+                <div class="card-title" style="margin-top: 10px;">
+                    <span>📊</span> Transcoding Progress & Telemetry
+                </div>
+
+                <div class="progress-container">
+                    <div class="status-row">
+                        <span id="statusMessage">Ready. Select a file to inspect metadata and transcode.</span>
+                        <span id="progressText">0%</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="progressBarFill"></div>
+                    </div>
+                </div>
+
+                <!-- Terminal Console -->
+                <div class="terminal" id="terminalLog">
+                    <div>[Media_TranscodeX Web Engine Initialized]</div>
+                </div>
+
+                <!-- Action Controls -->
+                <div style="display: flex; gap: 12px; margin-top: 10px;">
+                    <button class="btn btn-primary" id="startBtn" style="flex: 2;" disabled>⚡ Start Transcoding & Multiplexing</button>
+                    <button class="btn btn-secondary" id="downloadBtn" style="flex: 1; display: none;" download>💾 Download Result</button>
+                </div>
+
+                <!-- Video Output Preview -->
+                <video id="outputVideo" controls style="width: 100%; border-radius: var(--radius-md); display: none; margin-top: 12px; border: 1px solid var(--border-card);"></video>
+
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Application Engine Script -->
+    <script src="app.js"></script>
+</body>
+</html>

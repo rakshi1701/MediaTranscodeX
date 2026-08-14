@@ -136,8 +136,8 @@ void ConversionWorker::process() {
                 AVCodecContext* decCtx = pipe.decoder->getCodecContext();
                 AVCodecContext* encCtx = encoder.getAudioCodecContext(i);
                 if (encCtx) {
-                    uint64_t inLayout = decCtx->channel_layout ? decCtx->channel_layout : av_get_default_channel_layout(decCtx->channels);
-                    uint64_t outLayout = encCtx->channel_layout ? encCtx->channel_layout : av_get_default_channel_layout(encCtx->channels);
+                    uint64_t inLayout = Core::Compat::getChannelLayout(decCtx);
+                    uint64_t outLayout = Core::Compat::getChannelLayout(encCtx);
                     
                     pipe.resampler = std::make_unique<Core::AudioResampler>();
                     if (pipe.resampler->init(inLayout, decCtx->sample_fmt, decCtx->sample_rate,
