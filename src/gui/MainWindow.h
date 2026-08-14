@@ -27,6 +27,9 @@ private slots:
     void startConversion();
     void cancelConversion();
     void inspectFile(const QString& filePath);
+    void addAudioTrack();
+    void addSubtitleTrack();
+    void removeSelectedTrack();
 
     void onProgressUpdated(int percentage);
     void onStatusMessage(const QString& message);
@@ -43,6 +46,13 @@ private:
     QPushButton *m_startBtn = nullptr;
     QPushButton *m_cancelBtn = nullptr;
     QTreeWidget *m_infoTree = nullptr;
+
+    QPushButton *m_addAudioBtn = nullptr;
+    QPushButton *m_addSubtitleBtn = nullptr;
+    QPushButton *m_removeTrackBtn = nullptr;
+
+    QTreeWidgetItem *m_audioCategoryItem = nullptr;
+    QTreeWidgetItem *m_subtitleCategoryItem = nullptr;
 
     QThread *m_workerThread = nullptr;
     Worker::ConversionWorker *m_worker = nullptr;

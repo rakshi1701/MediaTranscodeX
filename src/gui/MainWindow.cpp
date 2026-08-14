@@ -3,6 +3,7 @@
 #include <QHBoxLayout>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QFileInfo>
 #include <QGroupBox>
 
@@ -19,7 +20,7 @@ MainWindow::~MainWindow() {
 
 void MainWindow::setupUi() {
     setWindowTitle("Media_TranscodeX - Desktop Media Converter & Inspector");
-    resize(750, 600);
+    resize(800, 650);
 
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
@@ -48,13 +49,29 @@ void MainWindow::setupUi() {
     outputLayout->addWidget(browseOutputBtn);
 
     // Media Inspector Section
-    QGroupBox *inspectorGroup = new QGroupBox("🔍 Media Streams & Metadata Inspector", this);
+    QGroupBox *inspectorGroup = new QGroupBox("🔍 Media Streams & Track Manager", this);
     QVBoxLayout *inspectorLayout = new QVBoxLayout(inspectorGroup);
+
     m_infoTree = new QTreeWidget(this);
     m_infoTree->setHeaderLabels({"Property / Track", "Value / Details"});
     m_infoTree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_infoTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     inspectorLayout->addWidget(m_infoTree);
+
+    // Stream Modification Buttons
+    QHBoxLayout *trackBtnLayout = new QHBoxLayout();
+    m_addAudioBtn = new QPushButton("➕ Add Audio Track...", this);
+    m_addSubtitleBtn = new QPushButton("➕ Add Subtitle Track...", this);
+    m_removeTrackBtn = new QPushButton("❌ Remove / Disable Track", this);
+
+    connect(m_addAudioBtn, &QPushButton::clicked, this, &MainWindow::addAudioTrack);
+    connect(m_addSubtitleBtn, &QPushButton::clicked, this, &MainWindow::addSubtitleTrack);
+    connect(m_removeTrackBtn, &QPushButton::clicked, this, &MainWindow::removeSelectedTrack);
+
+    trackBtnLayout->addWidget(m_addAudioBtn);
+    trackBtnLayout->addWidget(m_addSubtitleBtn);
+    trackBtnLayout->addWidget(m_removeTrackBtn);
+    inspectorLayout->addLayout(trackBtnLayout);
 
     // Preset Options
     QHBoxLayout *presetLayout = new QHBoxLayout();
@@ -70,12 +87,12 @@ void MainWindow::setupUi() {
     m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
 
-    m_statusLabel = new QLabel("Ready. Select a file to inspect metadata and tracks.", this);
+    m_statusLabel = new QLabel("Ready. Select a file to inspect metadata and manage tracks.", this);
     m_statusLabel->setAlignment(Qt::AlignCenter);
 
     // Action Buttons
     QHBoxLayout *btnLayout = new QHBoxLayout();
-    m_startBtn = new QPushButton("Start Transcoding", this);
+    m_startBtn = new QPushButton("Start Transcoding & Multiplexing", this);
     m_cancelBtn = new QPushButton("Cancel", this);
     m_cancelBtn->setEnabled(false);
 
@@ -116,6 +133,9 @@ void MainWindow::browseOutputFile() {
 
 void MainWindow::inspectFile(const QString& filePath) {
     m_infoTree->clear();
+    m_audioCategoryItem = nullptr;
+    m_subtitleCategoryItem = nullptr;
+
     if (filePath.isEmpty() || !QFile::exists(filePath)) {
         return;
     }
@@ -180,42 +200,122 @@ void MainWindow::inspectFile(const QString& filePath) {
     }
 
     // 4. Audio Streams
-    if (!info.audioTracks.empty()) {
-        QTreeWidgetItem *audioCategory = new QTreeWidgetItem(m_infoTree);
-        audioCategory->setText(0, QString("🎵 Audio Tracks (%1)").arg(info.audioTracks.size()));
-        audioCategory->setExpanded(true);
+    m_audioCategoryItem = new QTreeWidgetItem(m_infoTree);
+    m_audioCategoryItem->setText(0, QString("🎵 Audio Tracks (%1)").arg(info.audioTracks.size()));
+    m_audioCategoryItem->setExpanded(true);
 
-        for (const auto& a : info.audioTracks) {
-            QTreeWidgetItem *aTrack = new QTreeWidgetItem(audioCategory);
-            aTrack->setText(0, QString("Stream #%1").arg(a.index));
-            aTrack->setText(1, QString::fromStdString(a.codecName + " (" + a.codecLongName + ")"));
-            aTrack->setExpanded(true);
+    for (const auto& a : info.audioTracks) {
+        QTreeWidgetItem *aTrack = new QTreeWidgetItem(m_audioCategoryItem);
+        aTrack->setFlags(aTrack->flags() | Qt::ItemIsUserCheckable);
+        aTrack->setCheckState(0, Qt::Checked);
+        aTrack->setText(0, QString("Internal Stream #%1").arg(a.index));
+        aTrack->setText(1, QString::fromStdString(a.codecName + " (" + a.codecLongName + ")"));
+        aTrack->setData(0, Qt::UserRole + 1, static_cast<int>(Core::TrackType::Audio));
+        aTrack->setData(0, Qt::UserRole + 2, static_cast<int>(Core::TrackSourceType::Internal));
+        aTrack->setData(0, Qt::UserRole + 3, a.index);
+        aTrack->setExpanded(true);
 
-            addProp(aTrack, "Channels", QString("%1 ch").arg(a.channels));
-            addProp(aTrack, "Sample Rate", QString("%1 Hz").arg(a.sampleRate));
-            if (a.bitRate > 0) addProp(aTrack, "Bitrate", QString("%1 kbps").arg(a.bitRate / 1000));
-            if (!a.language.empty()) addProp(aTrack, "Language", QString::fromStdString(a.language));
-            if (!a.title.empty()) addProp(aTrack, "Title", QString::fromStdString(a.title));
-        }
+        addProp(aTrack, "Channels", QString("%1 ch").arg(a.channels));
+        addProp(aTrack, "Sample Rate", QString("%1 Hz").arg(a.sampleRate));
+        if (a.bitRate > 0) addProp(aTrack, "Bitrate", QString("%1 kbps").arg(a.bitRate / 1000));
+        if (!a.language.empty()) addProp(aTrack, "Language", QString::fromStdString(a.language));
+        if (!a.title.empty()) addProp(aTrack, "Title", QString::fromStdString(a.title));
     }
 
     // 5. Subtitle Streams
-    if (!info.subtitleTracks.empty()) {
-        QTreeWidgetItem *subCategory = new QTreeWidgetItem(m_infoTree);
-        subCategory->setText(0, QString("💬 Subtitle Tracks (%1)").arg(info.subtitleTracks.size()));
-        subCategory->setExpanded(true);
+    m_subtitleCategoryItem = new QTreeWidgetItem(m_infoTree);
+    m_subtitleCategoryItem->setText(0, QString("💬 Subtitle Tracks (%1)").arg(info.subtitleTracks.size()));
+    m_subtitleCategoryItem->setExpanded(true);
 
-        for (const auto& s : info.subtitleTracks) {
-            QTreeWidgetItem *sTrack = new QTreeWidgetItem(m_infoTree);
-            sTrack->setText(0, QString("Stream #%1").arg(s.index));
-            sTrack->setText(1, QString::fromStdString(s.codecName + " (" + s.codecLongName + ")"));
-            sTrack->setExpanded(true);
+    for (const auto& s : info.subtitleTracks) {
+        QTreeWidgetItem *sTrack = new QTreeWidgetItem(m_subtitleCategoryItem);
+        sTrack->setFlags(sTrack->flags() | Qt::ItemIsUserCheckable);
+        sTrack->setCheckState(0, Qt::Checked);
+        sTrack->setText(0, QString("Internal Stream #%1").arg(s.index));
+        sTrack->setText(1, QString::fromStdString(s.codecName + " (" + s.codecLongName + ")"));
+        sTrack->setData(0, Qt::UserRole + 1, static_cast<int>(Core::TrackType::Subtitle));
+        sTrack->setData(0, Qt::UserRole + 2, static_cast<int>(Core::TrackSourceType::Internal));
+        sTrack->setData(0, Qt::UserRole + 3, s.index);
+        sTrack->setExpanded(true);
 
-            if (!s.language.empty()) addProp(sTrack, "Language", QString::fromStdString(s.language));
-            if (!s.title.empty()) addProp(sTrack, "Title", QString::fromStdString(s.title));
-            if (s.isDefault) addProp(sTrack, "Default Flag", "Yes");
-            if (s.isForced) addProp(sTrack, "Forced Flag", "Yes");
-        }
+        if (!s.language.empty()) addProp(sTrack, "Language", QString::fromStdString(s.language));
+        if (!s.title.empty()) addProp(sTrack, "Title", QString::fromStdString(s.title));
+        if (s.isDefault) addProp(sTrack, "Default Flag", "Yes");
+        if (s.isForced) addProp(sTrack, "Forced Flag", "Yes");
+    }
+}
+
+void MainWindow::addAudioTrack() {
+    QString path = QFileDialog::getOpenFileName(this, "Select External Audio File", "", "Audio Files (*.mp3 *.m4a *.aac *.wav *.flac *.ogg);;All Files (*)");
+    if (path.isEmpty()) return;
+
+    bool ok = false;
+    double offset = QInputDialog::getDouble(this, "Audio Start Offset", "Start Offset in External Audio (seconds):", 0.0, 0.0, 86400.0, 1, &ok);
+    if (!ok) offset = 0.0;
+
+    double duration = QInputDialog::getDouble(this, "Audio Max Duration", "Max Audio Duration in seconds (0 = match main video length):", 0.0, 0.0, 86400.0, 1, &ok);
+    if (!ok) duration = 0.0;
+
+    if (!m_audioCategoryItem) {
+        m_audioCategoryItem = new QTreeWidgetItem(m_infoTree);
+        m_audioCategoryItem->setText(0, "🎵 Audio Tracks");
+        m_audioCategoryItem->setExpanded(true);
+    }
+
+    QFileInfo info(path);
+    QTreeWidgetItem *aTrack = new QTreeWidgetItem(m_audioCategoryItem);
+    aTrack->setFlags(aTrack->flags() | Qt::ItemIsUserCheckable);
+    aTrack->setCheckState(0, Qt::Checked);
+    aTrack->setText(0, QString("External Audio: %1").arg(info.fileName()));
+    
+    QString details = path;
+    if (offset > 0 || duration > 0) {
+        details += QString(" (Offset: %1s, Duration: %2)").arg(offset).arg(duration > 0 ? QString("%1s").arg(duration) : "Auto Video Match");
+    } else {
+        details += " (Auto Video Match)";
+    }
+    aTrack->setText(1, details);
+
+    aTrack->setData(0, Qt::UserRole + 1, static_cast<int>(Core::TrackType::Audio));
+    aTrack->setData(0, Qt::UserRole + 2, static_cast<int>(Core::TrackSourceType::External));
+    aTrack->setData(0, Qt::UserRole + 3, path);
+    aTrack->setData(0, Qt::UserRole + 4, offset);
+    aTrack->setData(0, Qt::UserRole + 5, duration);
+}
+
+void MainWindow::addSubtitleTrack() {
+    QString path = QFileDialog::getOpenFileName(this, "Select External Subtitle File", "", "Subtitle Files (*.srt *.vtt *.ass);;All Files (*)");
+    if (path.isEmpty()) return;
+
+    if (!m_subtitleCategoryItem) {
+        m_subtitleCategoryItem = new QTreeWidgetItem(m_infoTree);
+        m_subtitleCategoryItem->setText(0, "💬 Subtitle Tracks");
+        m_subtitleCategoryItem->setExpanded(true);
+    }
+
+    QFileInfo info(path);
+    QTreeWidgetItem *sTrack = new QTreeWidgetItem(m_subtitleCategoryItem);
+    sTrack->setFlags(sTrack->flags() | Qt::ItemIsUserCheckable);
+    sTrack->setCheckState(0, Qt::Checked);
+    sTrack->setText(0, QString("External Subtitle: %1").arg(info.fileName()));
+    sTrack->setText(1, path);
+    sTrack->setData(0, Qt::UserRole + 1, static_cast<int>(Core::TrackType::Subtitle));
+    sTrack->setData(0, Qt::UserRole + 2, static_cast<int>(Core::TrackSourceType::External));
+    sTrack->setData(0, Qt::UserRole + 3, path);
+}
+
+void MainWindow::removeSelectedTrack() {
+    QTreeWidgetItem *item = m_infoTree->currentItem();
+    if (!item) return;
+
+    QVariant sourceTypeVar = item->data(0, Qt::UserRole + 2);
+    if (!sourceTypeVar.isValid()) return;
+
+    Core::TrackSourceType sourceType = static_cast<Core::TrackSourceType>(sourceTypeVar.toInt());
+    if (sourceType == Core::TrackSourceType::External) {
+        delete item;
+    } else {
+        item->setCheckState(0, Qt::Unchecked);
     }
 }
 
@@ -234,13 +334,53 @@ void MainWindow::startConversion() {
     options.video.codecId = AV_CODEC_ID_H264;
     options.video.bitRate = m_presetCombo->currentData().toInt();
 
-    // Default Audio Options (AAC 48kHz Stereo @ 192kbps)
+    // Default Audio Encoding Settings
     options.audio.enableAudio = true;
     options.audio.codecId = AV_CODEC_ID_AAC;
     options.audio.sampleRate = 48000;
     options.audio.channels = 2;
     options.audio.bitRate = 192000;
     options.audio.sampleFmt = AV_SAMPLE_FMT_FLTP;
+
+    // Scan Audio Tracks
+    if (m_audioCategoryItem) {
+        for (int i = 0; i < m_audioCategoryItem->childCount(); ++i) {
+            QTreeWidgetItem *child = m_audioCategoryItem->child(i);
+            if (child->checkState(0) == Qt::Checked) {
+                Core::TrackSelection sel;
+                sel.type = Core::TrackType::Audio;
+                sel.enabled = true;
+                sel.sourceType = static_cast<Core::TrackSourceType>(child->data(0, Qt::UserRole + 2).toInt());
+                if (sel.sourceType == Core::TrackSourceType::Internal) {
+                    sel.sourceStreamIndex = child->data(0, Qt::UserRole + 3).toInt();
+                } else {
+                    sel.externalFilePath = child->data(0, Qt::UserRole + 3).toString().toStdString();
+                    sel.startTimeSec = child->data(0, Qt::UserRole + 4).toDouble();
+                    sel.maxDurationSec = child->data(0, Qt::UserRole + 5).toDouble();
+                }
+                options.selectedAudioTracks.push_back(sel);
+            }
+        }
+    }
+
+    // Scan Subtitle Tracks
+    if (m_subtitleCategoryItem) {
+        for (int j = 0; j < m_subtitleCategoryItem->childCount(); ++j) {
+            QTreeWidgetItem *child = m_subtitleCategoryItem->child(j);
+            if (child->checkState(0) == Qt::Checked) {
+                Core::TrackSelection sel;
+                sel.type = Core::TrackType::Subtitle;
+                sel.enabled = true;
+                sel.sourceType = static_cast<Core::TrackSourceType>(child->data(0, Qt::UserRole + 2).toInt());
+                if (sel.sourceType == Core::TrackSourceType::Internal) {
+                    sel.sourceStreamIndex = child->data(0, Qt::UserRole + 3).toInt();
+                } else {
+                    sel.externalFilePath = child->data(0, Qt::UserRole + 3).toString().toStdString();
+                }
+                options.selectedSubtitleTracks.push_back(sel);
+            }
+        }
+    }
 
     m_workerThread = new QThread(this);
     m_worker = new Worker::ConversionWorker(options);

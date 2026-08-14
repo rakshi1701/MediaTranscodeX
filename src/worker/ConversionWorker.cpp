@@ -4,8 +4,29 @@
 #include "MediaEncoder.h"
 #include "AudioResampler.h"
 #include <QDebug>
+#include <vector>
+#include <memory>
 
 namespace Worker {
+
+struct AudioPipeline {
+    size_t outputTrackIndex = 0;
+    Core::TrackSourceType sourceType = Core::TrackSourceType::Internal;
+    int streamIndex = -1;
+    std::shared_ptr<Core::MediaDemuxer> externalDemuxer;
+    std::unique_ptr<Core::MediaDecoder> decoder;
+    std::unique_ptr<Core::AudioResampler> resampler;
+    double startTimeSec = 0.0;
+    double maxDurationSec = 0.0;
+};
+
+struct SubtitlePipeline {
+    size_t outputTrackIndex = 0;
+    Core::TrackSourceType sourceType = Core::TrackSourceType::Internal;
+    int streamIndex = -1;
+    std::shared_ptr<Core::MediaDemuxer> externalDemuxer;
+    AVRational timeBase = AVRational{1, 1000};
+};
 
 ConversionWorker::ConversionWorker(const Core::TranscodeOptions& options, QObject *parent)
     : QObject(parent), m_options(options) {}
@@ -15,80 +36,147 @@ void ConversionWorker::cancel() {
 }
 
 void ConversionWorker::process() {
-    emit statusMessage("Opening input file...");
+    emit statusMessage("Opening primary input file...");
 
-    Core::MediaDemuxer demuxer;
-    if (!demuxer.openFile(m_options.inputFilePath)) {
-        emit conversionFinished(false, "Failed to open input media file.");
+    auto primaryDemuxer = std::make_shared<Core::MediaDemuxer>();
+    if (!primaryDemuxer->openFile(m_options.inputFilePath)) {
+        emit conversionFinished(false, "Failed to open primary media file.");
         return;
     }
 
-    AVStream* videoStream = demuxer.getVideoStream();
-    AVStream* audioStream = demuxer.getAudioStream();
-
+    AVStream* videoStream = primaryDemuxer->getVideoStream();
     bool hasVideo = (videoStream != nullptr) && m_options.video.enableVideo;
-    bool hasAudio = (audioStream != nullptr) && m_options.audio.enableAudio;
 
-    // Initialize Decoders
+    // Filter enabled Audio and Subtitle tracks
+    std::vector<Core::TrackSelection> enabledAudioSelections;
+    for (const auto& a : m_options.selectedAudioTracks) {
+        if (a.enabled) enabledAudioSelections.push_back(a);
+    }
+    // If no explicit selections were provided, default to best internal audio if available
+    if (m_options.selectedAudioTracks.empty() && primaryDemuxer->getAudioStream() && m_options.audio.enableAudio) {
+        Core::TrackSelection defaultAudio;
+        defaultAudio.type = Core::TrackType::Audio;
+        defaultAudio.sourceType = Core::TrackSourceType::Internal;
+        defaultAudio.sourceStreamIndex = primaryDemuxer->getInfo().audioStreamIndex;
+        defaultAudio.enabled = true;
+        enabledAudioSelections.push_back(defaultAudio);
+    }
+
+    std::vector<Core::TrackSelection> enabledSubtitleSelections;
+    for (const auto& s : m_options.selectedSubtitleTracks) {
+        if (s.enabled) enabledSubtitleSelections.push_back(s);
+    }
+
+    // Initialize Video Decoder
     Core::MediaDecoder videoDecoder;
-    Core::MediaDecoder audioDecoder;
-
     if (hasVideo && !videoDecoder.init(videoStream)) {
         emit conversionFinished(false, "Failed to initialize video decoder.");
         return;
     }
 
-    if (hasAudio && !audioDecoder.init(audioStream)) {
-        emit conversionFinished(false, "Failed to initialize audio decoder.");
-        return;
-    }
-
-    // Auto-fill video options from input if unset
     if (hasVideo) {
         if (m_options.video.targetWidth <= 0)  m_options.video.targetWidth = videoDecoder.getCodecContext()->width;
         if (m_options.video.targetHeight <= 0) m_options.video.targetHeight = videoDecoder.getCodecContext()->height;
     }
 
-    // Initialize Encoder
+    // Initialize Output MediaEncoder
     Core::MediaEncoder encoder;
-    if (!encoder.init(m_options, hasVideo, hasAudio)) {
+    if (!encoder.init(m_options, hasVideo, enabledAudioSelections.size(), enabledSubtitleSelections.size())) {
         emit conversionFinished(false, "Failed to initialize output encoder.");
         return;
     }
 
-    // Initialize Audio Resampler if needed
-    Core::AudioResampler resampler;
-    if (hasAudio) {
-        AVCodecContext* audioDecCtx = audioDecoder.getCodecContext();
-        AVCodecContext* audioEncCtx = encoder.getAudioCodecContext();
+    // Setup Audio Pipelines
+    std::vector<AudioPipeline> audioPipelines;
+    for (size_t i = 0; i < enabledAudioSelections.size(); ++i) {
+        const auto& sel = enabledAudioSelections[i];
+        AudioPipeline pipe;
+        pipe.outputTrackIndex = i;
+        pipe.sourceType = sel.sourceType;
+        pipe.startTimeSec = sel.startTimeSec;
+        pipe.maxDurationSec = sel.maxDurationSec;
 
-        uint64_t inLayout = audioDecCtx->channel_layout ? audioDecCtx->channel_layout : av_get_default_channel_layout(audioDecCtx->channels);
-        uint64_t outLayout = audioEncCtx->channel_layout ? audioEncCtx->channel_layout : av_get_default_channel_layout(audioEncCtx->channels);
+        AVStream* aStream = nullptr;
+        if (sel.sourceType == Core::TrackSourceType::Internal) {
+            pipe.streamIndex = sel.sourceStreamIndex;
+            if (pipe.streamIndex >= 0 && pipe.streamIndex < static_cast<int>(primaryDemuxer->getFormatContext()->nb_streams)) {
+                aStream = primaryDemuxer->getFormatContext()->streams[pipe.streamIndex];
+            }
+        } else {
+            pipe.externalDemuxer = std::make_shared<Core::MediaDemuxer>();
+            if (pipe.externalDemuxer->openFile(sel.externalFilePath)) {
+                aStream = pipe.externalDemuxer->getAudioStream();
+                if (aStream) {
+                    pipe.streamIndex = pipe.externalDemuxer->getInfo().audioStreamIndex;
+                }
+            }
+        }
 
-        if (!resampler.init(
-                inLayout, audioDecCtx->sample_fmt, audioDecCtx->sample_rate,
-                outLayout, audioEncCtx->sample_fmt, audioEncCtx->sample_rate)) {
-            emit conversionFinished(false, "Failed to initialize audio resampler.");
-            return;
+        if (aStream) {
+            pipe.decoder = std::make_unique<Core::MediaDecoder>();
+            if (pipe.decoder->init(aStream)) {
+                AVCodecContext* decCtx = pipe.decoder->getCodecContext();
+                AVCodecContext* encCtx = encoder.getAudioCodecContext(i);
+                if (encCtx) {
+                    uint64_t inLayout = decCtx->channel_layout ? decCtx->channel_layout : av_get_default_channel_layout(decCtx->channels);
+                    uint64_t outLayout = encCtx->channel_layout ? encCtx->channel_layout : av_get_default_channel_layout(encCtx->channels);
+                    
+                    pipe.resampler = std::make_unique<Core::AudioResampler>();
+                    if (pipe.resampler->init(inLayout, decCtx->sample_fmt, decCtx->sample_rate,
+                                            outLayout, encCtx->sample_fmt, encCtx->sample_rate)) {
+                        audioPipelines.push_back(std::move(pipe));
+                    }
+                }
+            }
         }
     }
 
-    emit statusMessage("Transcoding video and audio streams...");
+    // Setup Subtitle Pipelines
+    std::vector<SubtitlePipeline> subPipelines;
+    for (size_t j = 0; j < enabledSubtitleSelections.size(); ++j) {
+        const auto& sel = enabledSubtitleSelections[j];
+        SubtitlePipeline pipe;
+        pipe.outputTrackIndex = j;
+        pipe.sourceType = sel.sourceType;
 
-    double totalDuration = demuxer.getInfo().durationSeconds;
-    int vIdx = demuxer.getInfo().videoStreamIndex;
-    int aIdx = demuxer.getInfo().audioStreamIndex;
+        AVStream* sStream = nullptr;
+        if (sel.sourceType == Core::TrackSourceType::Internal) {
+            pipe.streamIndex = sel.sourceStreamIndex;
+            if (pipe.streamIndex >= 0 && pipe.streamIndex < static_cast<int>(primaryDemuxer->getFormatContext()->nb_streams)) {
+                sStream = primaryDemuxer->getFormatContext()->streams[pipe.streamIndex];
+            }
+        } else {
+            pipe.externalDemuxer = std::make_shared<Core::MediaDemuxer>();
+            if (pipe.externalDemuxer->openFile(sel.externalFilePath)) {
+                if (pipe.externalDemuxer->getFormatContext()->nb_streams > 0) {
+                    sStream = pipe.externalDemuxer->getFormatContext()->streams[0];
+                    pipe.streamIndex = 0;
+                }
+            }
+        }
+
+        if (sStream) {
+            pipe.timeBase = sStream->time_base;
+            subPipelines.push_back(std::move(pipe));
+        }
+    }
+
+    emit statusMessage("Transcoding primary video and active audio/subtitle tracks...");
+
+    double totalDuration = primaryDemuxer->getInfo().durationSeconds;
+    int vIdx = primaryDemuxer->getInfo().videoStreamIndex;
 
     Core::PacketPtr packet(av_packet_alloc());
 
-    while (av_read_frame(demuxer.getFormatContext(), packet.get()) >= 0) {
+    // 1. Demux & Process Primary Container
+    while (av_read_frame(primaryDemuxer->getFormatContext(), packet.get()) >= 0) {
         if (m_cancelRequested) {
             emit statusMessage("Cancelled by user.");
             emit conversionFinished(false, "Transcoding cancelled.");
             return;
         }
 
-        // Handle Video Packets
+        // Primary Video
         if (hasVideo && packet->stream_index == vIdx) {
             if (totalDuration > 0 && packet->pts != AV_NOPTS_VALUE) {
                 double sec = packet->pts * av_q2d(videoStream->time_base);
@@ -100,24 +188,83 @@ void ConversionWorker::process() {
                 encoder.encodeVideoFrame(frame);
             });
         }
-        // Handle Audio Packets
-        else if (hasAudio && packet->stream_index == aIdx) {
-            audioDecoder.decodePacket(packet.get(), [&](AVFrame* frame) {
-                Core::FramePtr resampledFrame = resampler.resampleFrame(frame);
-                if (resampledFrame) {
-                    encoder.encodeAudioFrame(resampledFrame.get());
-                }
-            });
+        // Primary Internal Audio Streams
+        for (auto& aPipe : audioPipelines) {
+            if (aPipe.sourceType == Core::TrackSourceType::Internal && packet->stream_index == aPipe.streamIndex) {
+                size_t outIdx = aPipe.outputTrackIndex;
+                aPipe.decoder->decodePacket(packet.get(), [&](AVFrame* frame) {
+                    Core::FramePtr resampledFrame = aPipe.resampler->resampleFrame(frame);
+                    if (resampledFrame) {
+                        encoder.encodeAudioFrame(outIdx, resampledFrame.get());
+                    }
+                });
+            }
+        }
+        // Primary Internal Subtitle Streams
+        for (auto& sPipe : subPipelines) {
+            if (sPipe.sourceType == Core::TrackSourceType::Internal && packet->stream_index == sPipe.streamIndex) {
+                encoder.writeSubtitlePacket(sPipe.outputTrackIndex, packet.get(), sPipe.timeBase);
+            }
         }
 
         av_packet_unref(packet.get());
+    }
+
+    // 2. Demux & Process External Audio Tracks
+    for (auto& aPipe : audioPipelines) {
+        if (aPipe.sourceType == Core::TrackSourceType::External && aPipe.externalDemuxer) {
+            emit statusMessage("Processing external audio track...");
+
+            // Perform seek if start offset specified
+            if (aPipe.startTimeSec > 0.0) {
+                int64_t seekTarget = static_cast<int64_t>(aPipe.startTimeSec * AV_TIME_BASE);
+                av_seek_frame(aPipe.externalDemuxer->getFormatContext(), -1, seekTarget, AVSEEK_FLAG_BACKWARD);
+            }
+
+            double maxAllowedDuration = (aPipe.maxDurationSec > 0.0) ? aPipe.maxDurationSec : totalDuration;
+            double processedAudioSec = 0.0;
+            bool durationReached = false;
+
+            Core::PacketPtr extPkt(av_packet_alloc());
+            size_t outIdx = aPipe.outputTrackIndex;
+            while (!durationReached && av_read_frame(aPipe.externalDemuxer->getFormatContext(), extPkt.get()) >= 0) {
+                if (extPkt->stream_index == aPipe.streamIndex) {
+                    aPipe.decoder->decodePacket(extPkt.get(), [&](AVFrame* frame) {
+                        if (durationReached) return;
+                        Core::FramePtr resampledFrame = aPipe.resampler->resampleFrame(frame);
+                        if (resampledFrame) {
+                            encoder.encodeAudioFrame(outIdx, resampledFrame.get());
+                            processedAudioSec += static_cast<double>(resampledFrame->nb_samples) / resampledFrame->sample_rate;
+                            if (maxAllowedDuration > 0.0 && processedAudioSec >= maxAllowedDuration) {
+                                durationReached = true;
+                            }
+                        }
+                    });
+                }
+                av_packet_unref(extPkt.get());
+            }
+        }
+    }
+
+    // 3. Demux & Process External Subtitle Tracks
+    for (auto& sPipe : subPipelines) {
+        if (sPipe.sourceType == Core::TrackSourceType::External && sPipe.externalDemuxer) {
+            emit statusMessage("Multiplexing external subtitle track...");
+            Core::PacketPtr extPkt(av_packet_alloc());
+            while (av_read_frame(sPipe.externalDemuxer->getFormatContext(), extPkt.get()) >= 0) {
+                if (extPkt->stream_index == sPipe.streamIndex) {
+                    encoder.writeSubtitlePacket(sPipe.outputTrackIndex, extPkt.get(), sPipe.timeBase);
+                }
+                av_packet_unref(extPkt.get());
+            }
+        }
     }
 
     emit statusMessage("Finalizing output container...");
     encoder.finish();
 
     emit progressUpdated(100);
-    emit conversionFinished(true, "Phase 2.1 Complete: Video and Audio Transcoded & Resampled!");
+    emit conversionFinished(true, "Media Stream Modification Complete!");
 }
 
 } // namespace Worker

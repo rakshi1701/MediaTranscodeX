@@ -2,6 +2,7 @@
 #define TRANSCODE_OPTIONS_H
 
 #include <string>
+#include <vector>
 
 extern "C" {
     #include <libavcodec/avcodec.h>
@@ -12,6 +13,30 @@ namespace Core {
 enum class RateControlMode {
     Bitrate,
     CRF
+};
+
+enum class TrackSourceType {
+    Internal,
+    External
+};
+
+enum class TrackType {
+    Video,
+    Audio,
+    Subtitle
+};
+
+struct TrackSelection {
+    TrackType type = TrackType::Audio;
+    TrackSourceType sourceType = TrackSourceType::Internal;
+    int sourceStreamIndex = -1;       // Stream index in internal container
+    std::string externalFilePath = ""; // Absolute file path if external file
+    bool enabled = true;
+    std::string language = "";
+    std::string title = "";
+    
+    double startTimeSec = 0.0;     // Start offset within external media file
+    double maxDurationSec = 0.0;   // Max duration in seconds (0.0 = match video duration)
 };
 
 // --- Video Options ---
@@ -47,6 +72,9 @@ struct TranscodeOptions {
     
     VideoOptions video;
     AudioOptions audio;
+
+    std::vector<TrackSelection> selectedAudioTracks;
+    std::vector<TrackSelection> selectedSubtitleTracks;
 };
 
 } // namespace Core

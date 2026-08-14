@@ -3,6 +3,7 @@
 
 extern "C" {
     #include <libavutil/channel_layout.h>
+    #include <libavutil/opt.h>
 }
 
 namespace Core {
@@ -13,7 +14,7 @@ MediaEncoder::~MediaEncoder() {
     }
 }
 
-bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, bool hasAudio) {
+bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t numAudioTracks, size_t numSubtitleTracks) {
     // 1. Allocate output context
     int ret = avformat_alloc_output_context2(&m_outputFormatCtx, nullptr, nullptr, options.outputFilePath.c_str());
     if (ret < 0 || !m_outputFormatCtx) {
@@ -53,47 +54,72 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, bool has
         avcodec_parameters_from_context(m_videoStream->codecpar, m_videoCodecCtx);
     }
 
-    // 3. Setup Audio Stream
-    if (hasAudio && options.audio.enableAudio) {
+    // 3. Setup Audio Streams
+    if (options.audio.enableAudio) {
         const AVCodec* audioCodec = avcodec_find_encoder(options.audio.codecId);
-        if (!audioCodec) {
-            std::cerr << "[MediaEncoder] Error: Audio encoder not found." << std::endl;
-            return false;
+        if (audioCodec) {
+            for (size_t i = 0; i < numAudioTracks; ++i) {
+                AudioStreamState aState;
+                aState.stream = avformat_new_stream(m_outputFormatCtx, nullptr);
+                aState.codecCtx = avcodec_alloc_context3(audioCodec);
+
+                aState.codecCtx->sample_rate = options.audio.sampleRate;
+                aState.codecCtx->sample_fmt = options.audio.sampleFmt;
+                aState.codecCtx->bit_rate = options.audio.bitRate;
+                aState.codecCtx->channel_layout = av_get_default_channel_layout(options.audio.channels);
+                aState.codecCtx->channels = options.audio.channels;
+                
+                aState.codecCtx->time_base = AVRational{1, options.audio.sampleRate};
+                aState.stream->time_base = aState.codecCtx->time_base;
+
+                if (m_outputFormatCtx->oformat->flags & AVFMT_GLOBALHEADER) {
+                    aState.codecCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+                }
+
+                if (avcodec_open2(aState.codecCtx, audioCodec, nullptr) < 0) {
+                    std::cerr << "[MediaEncoder] Error: Failed to open audio codec for track " << i << std::endl;
+                    return false;
+                }
+
+                aState.fifo = av_audio_fifo_alloc(aState.codecCtx->sample_fmt, aState.codecCtx->channels, 1);
+                if (!aState.fifo) {
+                    std::cerr << "[MediaEncoder] Error: Could not allocate AVAudioFifo for track " << i << std::endl;
+                    return false;
+                }
+
+                avcodec_parameters_from_context(aState.stream->codecpar, aState.codecCtx);
+                m_audioStreams.push_back(aState);
+            }
         }
-
-        m_audioStream = avformat_new_stream(m_outputFormatCtx, nullptr);
-        m_audioCodecCtx = avcodec_alloc_context3(audioCodec);
-
-        m_audioCodecCtx->sample_rate = options.audio.sampleRate;
-        m_audioCodecCtx->sample_fmt = options.audio.sampleFmt;
-        m_audioCodecCtx->bit_rate = options.audio.bitRate;
-        
-        // av_channel_layout_default(&m_audioCodecCtx->ch_layout, options.audio.channels);
-
-        m_audioCodecCtx->channel_layout = av_get_default_channel_layout(options.audio.channels);
-        m_audioCodecCtx->channels = options.audio.channels;
-        
-        m_audioCodecCtx->time_base = AVRational{1, options.audio.sampleRate};
-        m_audioStream->time_base = m_audioCodecCtx->time_base;
-
-        if (m_outputFormatCtx->oformat->flags & AVFMT_GLOBALHEADER) {
-            m_audioCodecCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-        }
-
-        if (avcodec_open2(m_audioCodecCtx, audioCodec, nullptr) < 0) {
-            std::cerr << "[MediaEncoder] Error: Failed to open audio codec." << std::endl;
-            return false;
-        }
-
-        avcodec_parameters_from_context(m_audioStream->codecpar, m_audioCodecCtx);
     }
 
-    // 4. Open File & Write Header
+    // 4. Setup Subtitle Streams
+    for (size_t j = 0; j < numSubtitleTracks; ++j) {
+        SubtitleStreamState sState;
+        sState.stream = avformat_new_stream(m_outputFormatCtx, nullptr);
+        
+        // Pick appropriate subtitle codec based on output container
+        AVCodecID subCodecId = AV_CODEC_ID_SUBRIP;
+        if (m_outputFormatCtx->oformat && std::string(m_outputFormatCtx->oformat->name).find("mp4") != std::string::npos) {
+            subCodecId = AV_CODEC_ID_MOV_TEXT;
+        }
+
+        sState.stream->codecpar->codec_type = AVMEDIA_TYPE_SUBTITLE;
+        sState.stream->codecpar->codec_id = subCodecId;
+
+        m_subtitleStreams.push_back(sState);
+    }
+
+    // 5. Open File & Write Header
     if (!(m_outputFormatCtx->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&m_outputFormatCtx->pb, options.outputFilePath.c_str(), AVIO_FLAG_WRITE) < 0) {
             std::cerr << "[MediaEncoder] Error: Could not open file for writing." << std::endl;
             return false;
         }
+    }
+
+    if (m_outputFormatCtx->priv_data) {
+        av_opt_set(m_outputFormatCtx->priv_data, "avoid_negative_ts", "make_zero", 0);
     }
 
     if (avformat_write_header(m_outputFormatCtx, nullptr) < 0) {
@@ -129,29 +155,62 @@ bool MediaEncoder::encodeVideoFrame(AVFrame* frame) {
     return true;
 }
 
-bool MediaEncoder::encodeAudioFrame(AVFrame* frame) {
-    if (!m_audioCodecCtx) return false;
+bool MediaEncoder::encodeAudioFrame(size_t trackIdx, AVFrame* frame) {
+    if (trackIdx >= m_audioStreams.size()) return false;
+    AudioStreamState& aState = m_audioStreams[trackIdx];
+    if (!aState.codecCtx || !aState.fifo) return false;
 
-    if (frame) {
-        frame->pts = m_nextAudioPts;
-        m_nextAudioPts += frame->nb_samples;
+    if (frame && frame->nb_samples > 0) {
+        int fifoRet = av_audio_fifo_realloc(aState.fifo, av_audio_fifo_size(aState.fifo) + frame->nb_samples);
+        (void)fifoRet;
+        av_audio_fifo_write(aState.fifo, (void**)frame->extended_data, frame->nb_samples);
     }
 
-    int ret = avcodec_send_frame(m_audioCodecCtx, frame);
-    if (ret < 0) return false;
+    int frameSize = aState.codecCtx->frame_size > 0 ? aState.codecCtx->frame_size : 1024;
 
-    while (ret >= 0) {
-        PacketPtr pkt(av_packet_alloc());
-        if (!pkt) break;
+    while (av_audio_fifo_size(aState.fifo) >= frameSize) {
+        FramePtr encFrame(av_frame_alloc());
+        encFrame->nb_samples = frameSize;
+        encFrame->format = aState.codecCtx->sample_fmt;
+        encFrame->channel_layout = aState.codecCtx->channel_layout;
+        encFrame->channels = aState.codecCtx->channels;
+        encFrame->sample_rate = aState.codecCtx->sample_rate;
+        encFrame->pts = aState.nextPts;
+        aState.nextPts += frameSize;
 
-        ret = avcodec_receive_packet(m_audioCodecCtx, pkt.get());
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
-        if (ret < 0) return false;
+        if (av_frame_get_buffer(encFrame.get(), 0) < 0) break;
 
-        writePacket(pkt.get(), m_audioCodecCtx->time_base, m_audioStream);
+        if (av_audio_fifo_read(aState.fifo, (void**)encFrame->extended_data, frameSize) < frameSize) {
+            break;
+        }
+
+        int ret = avcodec_send_frame(aState.codecCtx, encFrame.get());
+        if (ret < 0) break;
+
+        while (ret >= 0) {
+            PacketPtr pkt(av_packet_alloc());
+            if (!pkt) break;
+
+            ret = avcodec_receive_packet(aState.codecCtx, pkt.get());
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
+            if (ret < 0) return false;
+
+            writePacket(pkt.get(), aState.codecCtx->time_base, aState.stream);
+        }
     }
 
     return true;
+}
+
+bool MediaEncoder::writeSubtitlePacket(size_t trackIdx, AVPacket* pkt, AVRational srcTimeBase) {
+    if (trackIdx >= m_subtitleStreams.size() || !pkt) return false;
+    AVStream* subStream = m_subtitleStreams[trackIdx].stream;
+    if (!subStream) return false;
+
+    av_packet_rescale_ts(pkt, srcTimeBase, subStream->time_base);
+    pkt->stream_index = subStream->index;
+
+    return av_interleaved_write_frame(m_outputFormatCtx, pkt) >= 0;
 }
 
 bool MediaEncoder::writePacket(AVPacket* pkt, AVRational timeBase, AVStream* stream) {
@@ -167,14 +226,41 @@ bool MediaEncoder::finish() {
     if (m_finished) return true;
 
     if (m_videoCodecCtx) encodeVideoFrame(nullptr);
-    if (m_audioCodecCtx) encodeAudioFrame(nullptr);
+    for (size_t i = 0; i < m_audioStreams.size(); ++i) {
+        AudioStreamState& aState = m_audioStreams[i];
+        if (aState.fifo && av_audio_fifo_size(aState.fifo) > 0) {
+            int remaining = av_audio_fifo_size(aState.fifo);
+            FramePtr encFrame(av_frame_alloc());
+            encFrame->nb_samples = remaining;
+            encFrame->format = aState.codecCtx->sample_fmt;
+            encFrame->channel_layout = aState.codecCtx->channel_layout;
+            encFrame->channels = aState.codecCtx->channels;
+            encFrame->sample_rate = aState.codecCtx->sample_rate;
+            encFrame->pts = aState.nextPts;
+            aState.nextPts += remaining;
+
+            if (av_frame_get_buffer(encFrame.get(), 0) >= 0) {
+                av_audio_fifo_read(aState.fifo, (void**)encFrame->extended_data, remaining);
+                avcodec_send_frame(aState.codecCtx, encFrame.get());
+                while (true) {
+                    PacketPtr pkt(av_packet_alloc());
+                    if (avcodec_receive_packet(aState.codecCtx, pkt.get()) < 0) break;
+                    writePacket(pkt.get(), aState.codecCtx->time_base, aState.stream);
+                }
+            }
+        }
+        encodeAudioFrame(i, nullptr);
+    }
 
     if (m_outputFormatCtx && m_headerWritten) {
         av_write_trailer(m_outputFormatCtx);
     }
 
     if (m_videoCodecCtx) avcodec_free_context(&m_videoCodecCtx);
-    if (m_audioCodecCtx) avcodec_free_context(&m_audioCodecCtx);
+    for (auto& aState : m_audioStreams) {
+        if (aState.fifo) av_audio_fifo_free(aState.fifo);
+        if (aState.codecCtx) avcodec_free_context(&aState.codecCtx);
+    }
 
     if (m_outputFormatCtx) {
         if (!(m_outputFormatCtx->oformat->flags & AVFMT_NOFILE) && m_outputFormatCtx->pb) {
