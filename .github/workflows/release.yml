@@ -1,12 +1,16 @@
-name: Build Cross-Platform Release
+name: Build & Release CI/CD Pipeline
 
 on:
   push:
+    branches: [ "Main", "master" ]
     tags:
-      - 'v*' # Triggers on tags like v1.0.0, v1.0.1, etc.
+      - 'v*'
+  pull_request:
+    branches: [ "Main", "master" ]
+  workflow_dispatch:
 
 permissions:
-  contents: write # Grants write permissions to create GitHub Releases
+  contents: write
 
 jobs:
   build:
@@ -108,10 +112,18 @@ jobs:
           cd Release
           7z a ../../Media_TranscodeX-Windows.zip *
 
-      # --- 4. Upload Artifacts to Release ---
+      # --- 4. Upload Artifacts to Release or CI Build ---
       - name: Upload Artifacts to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.artifact_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Build Artifact (CI Workflow)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}

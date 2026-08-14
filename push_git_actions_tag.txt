@@ -1,0 +1,14 @@
+# 1. Stage all changes (including updated README.md and CI/CD workflow)
+git add .
+
+# 2. Commit the new version
+git commit -m "v2.0.0: Custom container formats, resolution scaling, multi-track multiplexing, and CI/CD workflow"
+
+# 3. Create a release tag for v2.0.0
+git tag -a v2.0.0 -m "Release v2.0.0 - Multi-track multiplexing, container format conversions & resolution scaling"
+
+# 4. Push commits to Main branch
+git push origin Main
+
+# 5. Push the v2.0.0 tag to trigger the GitHub Actions automated build & release workflow
+git push origin v2.0.0
