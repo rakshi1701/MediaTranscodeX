@@ -6,6 +6,8 @@ let externalAudio = [];
 let externalSubtitles = [];
 let includeOriginalAudio = true;
 let mediaDuration = 0;
+let sourceAudioTracks = []; // [{streamIndex, lang, codec, enabled}] — filled by probe
+let probeCapture = null;    // when non-null, FFmpeg log lines go here instead of terminal
 
 // DOM Elements
 const dropzone = document.getElementById('dropzone');
@@ -26,6 +28,7 @@ const addSubBtn = document.getElementById('addSubBtn');
 const audioFileInput = document.getElementById('audioFileInput');
 const subFileInput = document.getElementById('subFileInput');
 const startBtn = document.getElementById('startBtn');
+const cancelBtn = document.getElementById('cancelBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const progressBarFill = document.getElementById('progressBarFill');
 const progressText = document.getElementById('progressText');
@@ -59,7 +62,11 @@ async function initFFmpeg() {
             corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
             log: true,
             logger: m => {
-                if (m && m.message) {
+                if (!m || !m.message) return;
+                if (probeCapture !== null) {
+                    // During probe: capture every line directly here, split on newlines
+                    m.message.split('\n').forEach(l => probeCapture.push(l));
+                } else {
                     log(m.message);
                 }
             },
@@ -147,6 +154,7 @@ async function handleFileSelect(file) {
     externalAudio = [];
     externalSubtitles = [];
     includeOriginalAudio = true;
+    sourceAudioTracks = [];
     infoTree.innerHTML = '';
     downloadBtn.style.display = 'none';
     outputVideo.style.display = 'none';
@@ -177,8 +185,14 @@ async function handleFileSelect(file) {
         statusMessage.textContent = `Inspected: ${file.name}. Ready for transcode.`;
     };
 
-    // Pre-load FFmpeg WebAssembly module
-    initFFmpeg();
+    // Load FFmpeg then probe for audio tracks (runs in background, updates track list when done)
+    initFFmpeg().then(async (loaded) => {
+        if (!loaded || !ffmpeg || !ffmpeg.isLoaded()) return;
+        // Only probe the file that was selected (guard against fast file switching)
+        if (sourceFile !== file) return;
+        sourceAudioTracks = await probeAudioTracks(file);
+        if (sourceFile === file) renderTrackList(); // update UI with detected tracks
+    });
 }
 
 function renderTreeItem(key, val) {
@@ -186,6 +200,92 @@ function renderTreeItem(key, val) {
     div.className = 'tree-item';
     div.innerHTML = `<span class="tree-key">${key}:</span><span class="tree-val">${val}</span>`;
     infoTree.appendChild(div);
+}
+
+// Probe source file for audio streams using ffmpeg -i (exits non-zero intentionally)
+async function probeAudioTracks(file) {
+    try {
+        const { fetchFile } = window.FFmpeg || FFmpeg;
+        const ext = file.name.split('.').pop() || 'mp4';
+        const vfsName = `probe_tmp.${ext}`;
+        ffmpeg.FS('writeFile', vfsName, await fetchFile(file));
+
+        // Dual-capture: intercept both the FFmpeg.wasm logger callback (probeCapture)
+        // AND console.log/error — FFmpeg.wasm with log:true routes output to both paths,
+        // but with SharedArrayBuffer the delivery timing of each path differs.
+        probeCapture = [];
+        const consoleCaptured = [];
+        const origConsoleLog   = console.log;
+        const origConsoleError = console.error;
+        const origConsoleWarn  = console.warn;
+        const intercept = (...args) => {
+            const msg = args.map(a => (a != null ? String(a) : '')).join(' ');
+            if (msg) consoleCaptured.push(msg);
+        };
+        console.log   = intercept;
+        console.error = intercept;
+        console.warn  = intercept;
+
+        try { await ffmpeg.run('-i', vfsName); } catch (_) {}
+
+        // Wait 300 ms: with SharedArrayBuffer (COOP/COEP), logger postMessages from the
+        // Web Worker are macrotasks that can arrive well after run() rejects.
+        await new Promise(r => setTimeout(r, 300));
+
+        const loggerCaptured = [...probeCapture];
+        probeCapture = null;
+
+        // Restore console before any further work
+        console.log   = origConsoleLog;
+        console.error = origConsoleError;
+        console.warn  = origConsoleWarn;
+
+        try { ffmpeg.FS('unlink', vfsName); } catch (_) {}
+
+        // Merge both capture paths; split each message on '\n'; deduplicate
+        const seen = new Set();
+        const lines = [
+            ...loggerCaptured.flatMap(m => m.split('\n')),
+            ...consoleCaptured.flatMap(m => m.split('\n'))
+        ].filter(l => { if (seen.has(l)) return false; seen.add(l); return true; });
+
+        const audioLineCount = lines.filter(l => l.includes('Audio:')).length;
+        log(`Probe: ${loggerCaptured.length} logger msg(s) + ${consoleCaptured.length} console msg(s) → ${audioLineCount} audio line(s).`);
+
+        const tracks = [];
+        lines.forEach(line => {
+            if (!line.includes('Stream #') || !line.includes('Audio:')) return;
+            const idxM   = line.match(/Stream #\d+:(\d+)/);
+            const langM  = line.match(/Stream #\d+:\d+\((\w+)\)/);
+            const codecM = line.match(/Audio:\s*([^\s,(]+)/);
+            tracks.push({
+                streamIndex: idxM   ? parseInt(idxM[1]) : tracks.length,
+                lang:        langM  ? langM[1]           : '',
+                codec:       codecM ? codecM[1]          : 'audio',
+                enabled: true
+            });
+        });
+
+        log(`Probe complete: found ${tracks.length} audio track(s) in ${file.name}.` +
+            (tracks.length > 0 ? ' ' + tracks.map(t =>
+                `#${t.streamIndex}${t.lang ? '(' + t.lang + ')' : ''}[${t.codec}]`
+            ).join(', ') : ''));
+
+        return tracks;
+    } catch (e) {
+        probeCapture = null;
+        log(`Audio probe error: ${e.message}`, true);
+        return [];
+    }
+}
+
+// Returns FFmpeg -map args for all currently enabled internal audio tracks.
+// Falls back to includeOriginalAudio flag when no probe data is available.
+function getEnabledInternalAudioMaps() {
+    if (sourceAudioTracks.length > 0) {
+        return sourceAudioTracks.filter(t => t.enabled).map(t => `0:${t.streamIndex}`);
+    }
+    return includeOriginalAudio ? ['0:a'] : [];
 }
 
 function renderTrackList() {
@@ -202,18 +302,42 @@ function renderTrackList() {
     `;
     trackList.appendChild(vDiv);
 
-    // Primary Audio Track (with toggle remove option)
-    if (!muteAudioCheck.checked && includeOriginalAudio) {
-        const aDiv = document.createElement('div');
-        aDiv.className = 'track-card';
-        aDiv.innerHTML = `
-            <div class="track-info">
-                <span class="track-badge badge-audio">AUDIO</span>
-                <span>Primary Internal Audio Stream</span>
-            </div>
-            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; color: var(--accent-rose);" onclick="removeOriginalAudio()">Remove</button>
-        `;
-        trackList.appendChild(aDiv);
+    // Internal Audio Tracks
+    if (!muteAudioCheck.checked) {
+        if (sourceAudioTracks.length > 0) {
+            // Per-track display when probe data is available (Bug 1 fix)
+            sourceAudioTracks.forEach((track, idx) => {
+                const label = `Internal Audio Stream #${track.streamIndex}` +
+                    (track.lang  ? ` [${track.lang}]`  : '') +
+                    (track.codec ? ` (${track.codec})` : '');
+                const div = document.createElement('div');
+                div.className = 'track-card';
+                if (!track.enabled) div.style.opacity = '0.45';
+                div.innerHTML = `
+                    <div class="track-info">
+                        <span class="track-badge badge-audio">AUDIO</span>
+                        <span>${label}</span>
+                    </div>
+                    <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; color: ${track.enabled ? 'var(--accent-rose)' : 'var(--accent-emerald)'};"
+                        onclick="toggleSourceAudio(${idx})">${track.enabled ? 'Remove' : 'Restore'}</button>
+                `;
+                trackList.appendChild(div);
+            });
+        } else {
+            // Fallback before probe finishes — single toggle card (Bug 2 fix)
+            const aDiv = document.createElement('div');
+            aDiv.className = 'track-card';
+            if (!includeOriginalAudio) aDiv.style.opacity = '0.45';
+            aDiv.innerHTML = `
+                <div class="track-info">
+                    <span class="track-badge badge-audio">AUDIO</span>
+                    <span>Primary Internal Audio Stream</span>
+                </div>
+                <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; color: ${includeOriginalAudio ? 'var(--accent-rose)' : 'var(--accent-emerald)'};"
+                    onclick="toggleOriginalAudio()">${includeOriginalAudio ? 'Remove' : 'Restore'}</button>
+            `;
+            trackList.appendChild(aDiv);
+        }
     }
 
     // External Audio Tracks
@@ -223,7 +347,7 @@ function renderTrackList() {
         div.innerHTML = `
             <div class="track-info">
                 <span class="track-badge badge-audio">AUDIO</span>
-                <span>Ext: ${item.file.name} (+${item.delaySec}s delay)</span>
+                <span>Ext: ${item.file.name} (+${item.delaySec}s delay${item.maxDurationSec > 0 ? `, max ${item.maxDurationSec}s` : ''})</span>
             </div>
             <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px; color: var(--accent-rose);" onclick="removeExternalAudio(${index})">Delete</button>
         `;
@@ -245,10 +369,19 @@ function renderTrackList() {
     });
 }
 
-function removeOriginalAudio() {
-    includeOriginalAudio = false;
+// Toggle individual probed audio track (Bug 1 fix)
+function toggleSourceAudio(idx) {
+    sourceAudioTracks[idx].enabled = !sourceAudioTracks[idx].enabled;
+    const t = sourceAudioTracks[idx];
+    log(`${t.enabled ? 'Restored' : 'Removed'} internal audio Stream #${t.streamIndex} from output.`);
     renderTrackList();
-    log('Removed original audio track from transcode output.');
+}
+
+// Toggle fallback single-audio card when probe data isn't available (Bug 2 fix)
+function toggleOriginalAudio() {
+    includeOriginalAudio = !includeOriginalAudio;
+    log(includeOriginalAudio ? 'Restored original audio track.' : 'Removed original audio from output.');
+    renderTrackList();
 }
 
 function removeExternalAudio(index) {
@@ -277,10 +410,12 @@ audioFileInput.addEventListener('change', (e) => {
     if (!file) return;
     const delayStr = prompt(`Enter Start Offset Delay (seconds) for external audio "${file.name}":`, '0');
     const delaySec = parseFloat(delayStr) || 0;
+    const durStr = prompt(`Max Duration (seconds) for "${file.name}" — enter 0 to match main video length:`, '0');
+    const maxDurationSec = Math.max(0, parseFloat(durStr) || 0);
 
-    externalAudio.push({ file, delaySec });
+    externalAudio.push({ file, delaySec, maxDurationSec });
     renderTrackList();
-    log(`Added external audio track: ${file.name} with ${delaySec}s offset`);
+    log(`Added external audio track: ${file.name} (delay: ${delaySec}s${maxDurationSec > 0 ? `, max: ${maxDurationSec}s` : ''})`);
 });
 
 // Add External Subtitle
@@ -304,7 +439,11 @@ startBtn.addEventListener('click', async () => {
         return;
     }
 
+    // If probe was still running, stop capturing its output before we start transcoding
+    probeCapture = null;
+
     startBtn.disabled = true;
+    cancelBtn.style.display = 'inline-flex';  // show cancel button
     progressBarFill.style.width = '0%';
     progressText.textContent = '0%';
     statusMessage.textContent = 'Preparing virtual filesystem and loading media...';
@@ -324,17 +463,22 @@ startBtn.addEventListener('click', async () => {
         const downloadFileName = `${customName}.${targetExt}`;
         const outputVfsName = `vfs_output_converted.${targetExt}`;
 
+        // Audio codec varies by container: WebM requires Opus, others use AAC
+        const audioCodec = targetExt === 'webm' ? 'libopus' : 'aac';
+
         const args = ['-y', '-i', inputVfsName];
 
         let currentInputIndex = 1;
         const audioInputIndices = [];
 
         // 3. Handle External Audio Tracks
+        // Use input-level -t to enforce max duration (matches Qt's maxDurationSec behaviour)
         for (let i = 0; i < externalAudio.length; i++) {
             const extAudio = externalAudio[i];
             const extAudioExt = extAudio.file.name.split('.').pop() || 'mp3';
             const extAudioVfsName = `vfs_ext_audio_${i}.${extAudioExt}`;
             ffmpeg.FS('writeFile', extAudioVfsName, await fetchFile(extAudio.file));
+            if (extAudio.maxDurationSec > 0) args.push('-t', extAudio.maxDurationSec.toFixed(3));
             args.push('-i', extAudioVfsName);
             audioInputIndices.push(currentInputIndex);
             currentInputIndex++;
@@ -365,12 +509,12 @@ startBtn.addEventListener('click', async () => {
                 args.push('-c:a', 'flac');
             }
         } else {
-            // Video Codec per Container
+            // Video Codec per Container — Fix: WebM uses VP9 not VP8
             if (['mp4', 'mkv', 'mov', 'ts', 'flv', 'avi'].includes(targetExt)) {
                 args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p');
                 args.push('-b:v', bitrateSelect.value);
             } else if (targetExt === 'webm') {
-                args.push('-c:v', 'libvpx', '-b:v', bitrateSelect.value);
+                args.push('-c:v', 'libvpx-vp9', '-b:v', bitrateSelect.value);
             }
 
             // Video Resolution Scaling Filter
@@ -408,9 +552,9 @@ startBtn.addEventListener('click', async () => {
 
             if (!isAudioOnly) args.push('-map', '0:v:0');
 
-            if (includeOriginalAudio) {
-                args.push('-map', '0:a');  // keep original as its own audio track
-            }
+            // Map enabled internal audio tracks (uses per-track data when available)
+            const internalMaps = getEnabledInternalAudioMaps();
+            internalMaps.forEach(m => args.push('-map', m));
 
             // Each external audio file becomes its own separate audio track
             externalAudio.forEach((ea, i) => {
@@ -421,20 +565,27 @@ startBtn.addEventListener('click', async () => {
                 }
             });
 
-            args.push('-c:a', 'aac', '-b:a', audioBitrateSelect.value);
-            log(includeOriginalAudio
+            args.push('-c:a', audioCodec, '-b:a', audioBitrateSelect.value);
+            log(internalMaps.length > 0
                 ? 'Multiplexing external audio as separate track(s) alongside original...'
                 : 'Replacing internal audio with external audio track(s)...');
         } else {
             // Standard single video transcode
             if (!isAudioOnly) args.push('-map', '0:v:0');
-            args.push('-map', '0:a?');
-            if (!isAudioOnly) args.push('-c:a', 'aac', '-b:a', audioBitrateSelect.value);
+            const internalMaps = getEnabledInternalAudioMaps();
+            if (internalMaps.length > 0) {
+                internalMaps.forEach(m => args.push('-map', m));
+            } else if (sourceAudioTracks.length === 0) {
+                // No probe data — use optional map as fallback
+                args.push('-map', '0:a?');
+            }
+            // If probe found tracks but all are disabled → no audio maps → effectively muted
+            if (!isAudioOnly) args.push('-c:a', audioCodec, '-b:a', audioBitrateSelect.value);
         }
 
-        // Subtitle Mapping
+        // Subtitle Mapping — Fix: removed invalid '?' after stream index (s:0? → s:0)
         subInputIndices.forEach(idx => {
-            args.push('-map', `${idx}:s:0?`);
+            args.push('-map', `${idx}:s:0`);
         });
 
         // Auto-match duration if external tracks added
@@ -493,5 +644,18 @@ startBtn.addEventListener('click', async () => {
         statusMessage.textContent = 'Transcoding failed. Check terminal log.';
     } finally {
         startBtn.disabled = false;
+        cancelBtn.style.display = 'none';  // always hide cancel when done
     }
+});
+
+// Cancel transcoding — terminates the FFmpeg WebWorker; engine reloads on next transcode
+cancelBtn.addEventListener('click', () => {
+    try { ffmpeg.exit(); } catch (e) {}
+    ffmpeg = null;
+    startBtn.disabled = false;
+    cancelBtn.style.display = 'none';
+    progressBarFill.style.width = '0%';
+    progressText.textContent = '0%';
+    statusMessage.textContent = 'Cancelled. Engine will reload on next transcode.';
+    log('Transcode cancelled by user.', true);
 });
