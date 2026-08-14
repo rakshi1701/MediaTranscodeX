@@ -26,6 +26,13 @@ if (typeof window === 'undefined') {
     });
 } else {
     (() => {
+        // Capture the service worker script's own URL before any async code runs.
+        // window.location.href gives the PAGE url (index.html), not this JS file —
+        // registering that would fail on GitHub Pages subdirectory deployments.
+        const swScriptURL = document.currentScript
+            ? document.currentScript.src
+            : './coi-serviceworker.js';
+
         const reloadedBySelf = window.sessionStorage.getItem('coiReloadedBySelf');
         window.sessionStorage.removeItem('coiReloadedBySelf');
         const coepCredentialless = false;
@@ -35,7 +42,7 @@ if (typeof window === 'undefined') {
         if (!window.crossOriginIsolated && !reloadedBySelf) {
             window.sessionStorage.setItem('coiReloadedBySelf', 'true');
             if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.register(window.location.href).then(
+                navigator.serviceWorker.register(swScriptURL).then(
                     (registration) => {
                         registration.addEventListener('updatefound', () => {
                             window.location.reload();
