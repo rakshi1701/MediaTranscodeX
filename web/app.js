@@ -85,6 +85,16 @@ async function initFFmpeg() {
             log('💡 Run "python3 server.py" in your terminal to enable Cross-Origin Isolation headers (COOP/COEP).', true);
         }
 
+        // Fail fast with an actionable message if either vendored bundle didn't load
+        // (e.g. a transient CDN/edge propagation delay after deploy), instead of a
+        // cryptic destructure error surfacing later during probe/transcode.
+        if (!window.FFmpegWASM || !window.FFmpegWASM.FFmpeg) {
+            throw new Error('FFmpegWASM failed to load from vendor/ffmpeg.js — check the Network tab, or try a hard refresh.');
+        }
+        if (!window.FFmpegUtil || !window.FFmpegUtil.fetchFile) {
+            throw new Error('FFmpegUtil failed to load from vendor/ffmpeg-util.js — check the Network tab, or try a hard refresh.');
+        }
+
         const { FFmpeg } = window.FFmpegWASM;
         ffmpeg = new FFmpeg();
 
