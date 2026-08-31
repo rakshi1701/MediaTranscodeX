@@ -11,13 +11,14 @@
     <!-- Google Fonts -->
     <link rel="stylesheet" href="styles.css">
     
-    <!-- FFmpeg.wasm Multi-Threaded Bundle (requires the COOP/COEP isolation set up by coi-serviceworker.js) -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/umd/ffmpeg.js"
-            integrity="sha384-6gtICseWoSfROfflbGSkg1kwPTH+2SxMvyn0e3THJbNoyPxx5tzNk4EXfLIHD2iD"
-            crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.2/dist/umd/index.js"
-            integrity="sha384-pfTXXbzgpQ+siOKPe/NshFjDhSsvj8VTnEHnKGQJu7RKTniWBCB9E19NsmNSa21/"
-            crossorigin="anonymous"></script>
+    <!-- FFmpeg.wasm Multi-Threaded Bundle, vendored locally (not loaded from a CDN).
+         The library spins up its own internal Worker (vendor/814.ffmpeg.js) resolved
+         relative to the script that loaded it; browsers hard-block `new Worker()` on a
+         cross-origin URL regardless of CORS headers, so this file must be same-origin —
+         it cannot be loaded from unpkg like ffmpeg-core.js/.wasm/.worker.js are (those
+         are fetched manually in app.js and converted to same-origin blob: URLs instead). -->
+    <script src="vendor/ffmpeg.js"></script>
+    <script src="vendor/ffmpeg-util.js"></script>
 </head>
 <body>
 
