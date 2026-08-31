@@ -21,7 +21,15 @@ if (typeof window === 'undefined') {
                         headers: newHeaders,
                     });
                 })
-                .catch((e) => console.error(e))
+                .catch((e) => {
+                    // A transient failure here previously resolved to `undefined` instead of
+                    // a Response, which the browser treats as a silent, permanent network
+                    // failure for just that one resource — no error surfaces anywhere except
+                    // the loaded script never defining its global. Retry once without the
+                    // header rewrite so a hiccup on this fetch doesn't take the resource down.
+                    console.error('COI Service Worker fetch failed, retrying without header rewrite:', e);
+                    return fetch(event.request);
+                })
         );
     });
 } else {
