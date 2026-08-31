@@ -1,5 +1,6 @@
 #include "MediaEncoder.h"
 #include <iostream>
+#include <cstring>
 
 extern "C" {
     #include <libavutil/channel_layout.h>
@@ -207,10 +208,35 @@ bool MediaEncoder::writeSubtitlePacket(size_t trackIdx, AVPacket* pkt, AVRationa
     AVStream* subStream = m_subtitleStreams[trackIdx].stream;
     if (!subStream) return false;
 
-    av_packet_rescale_ts(pkt, srcTimeBase, subStream->time_base);
-    pkt->stream_index = subStream->index;
+    AVPacket* outPkt = pkt;
+    PacketPtr movTextPkt(nullptr);
 
-    return av_interleaved_write_frame(m_outputFormatCtx, pkt) >= 0;
+    // The demuxed packet is plain SRT cue text. MOV/MP4 requires the ISO/IEC 14496-17
+    // "mov_text" sample layout: a 2-byte big-endian length prefix followed by the raw
+    // UTF-8 text. Writing the SRT bytes unmodified produces a stream tagged mov_text
+    // that players cannot actually parse, so re-wrap it here before muxing.
+    if (subStream->codecpar->codec_id == AV_CODEC_ID_MOV_TEXT) {
+        int textLen = pkt->size;
+        while (textLen > 0 && pkt->data[textLen - 1] == '\0') textLen--;
+        if (textLen > 0xFFFF) textLen = 0xFFFF;
+
+        movTextPkt.reset(av_packet_alloc());
+        if (!movTextPkt || av_new_packet(movTextPkt.get(), textLen + 2) < 0) return false;
+
+        movTextPkt->data[0] = static_cast<uint8_t>((textLen >> 8) & 0xFF);
+        movTextPkt->data[1] = static_cast<uint8_t>(textLen & 0xFF);
+        if (textLen > 0) memcpy(movTextPkt->data + 2, pkt->data, textLen);
+
+        movTextPkt->pts = pkt->pts;
+        movTextPkt->dts = pkt->dts;
+        movTextPkt->duration = pkt->duration;
+        outPkt = movTextPkt.get();
+    }
+
+    av_packet_rescale_ts(outPkt, srcTimeBase, subStream->time_base);
+    outPkt->stream_index = subStream->index;
+
+    return av_interleaved_write_frame(m_outputFormatCtx, outPkt) >= 0;
 }
 
 bool MediaEncoder::writePacket(AVPacket* pkt, AVRational timeBase, AVStream* stream) {
