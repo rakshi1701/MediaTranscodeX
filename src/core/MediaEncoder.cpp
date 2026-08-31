@@ -164,9 +164,14 @@ bool MediaEncoder::encodeAudioFrame(size_t trackIdx, AVFrame* frame) {
     if (!aState.codecCtx || !aState.fifo) return false;
 
     if (frame && frame->nb_samples > 0) {
-        int fifoRet = av_audio_fifo_realloc(aState.fifo, av_audio_fifo_size(aState.fifo) + frame->nb_samples);
-        (void)fifoRet;
-        av_audio_fifo_write(aState.fifo, (void**)frame->extended_data, frame->nb_samples);
+        if (av_audio_fifo_realloc(aState.fifo, av_audio_fifo_size(aState.fifo) + frame->nb_samples) < 0) {
+            std::cerr << "[MediaEncoder] Error: Failed to grow audio FIFO for track " << trackIdx << std::endl;
+            return false;
+        }
+        if (av_audio_fifo_write(aState.fifo, (void**)frame->extended_data, frame->nb_samples) < frame->nb_samples) {
+            std::cerr << "[MediaEncoder] Error: Short write to audio FIFO for track " << trackIdx << std::endl;
+            return false;
+        }
     }
 
     int frameSize = aState.codecCtx->frame_size > 0 ? aState.codecCtx->frame_size : 1024;

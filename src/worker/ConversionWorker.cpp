@@ -266,7 +266,9 @@ void ConversionWorker::process() {
             // Perform seek if start offset specified
             if (aPipe.startTimeSec > 0.0) {
                 int64_t seekTarget = static_cast<int64_t>(aPipe.startTimeSec * AV_TIME_BASE);
-                av_seek_frame(aPipe.externalDemuxer->getFormatContext(), -1, seekTarget, AVSEEK_FLAG_BACKWARD);
+                if (av_seek_frame(aPipe.externalDemuxer->getFormatContext(), -1, seekTarget, AVSEEK_FLAG_BACKWARD) < 0) {
+                    emit statusMessage("Warning: failed to seek external audio to requested start offset; playing from beginning.");
+                }
             }
 
             double maxAllowedDuration = (aPipe.maxDurationSec > 0.0) ? aPipe.maxDurationSec : totalDuration;
