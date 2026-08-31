@@ -46,13 +46,15 @@ function log(msg, isError = false) {
     terminalLog.scrollTop = terminalLog.scrollHeight;
 }
 
-// Multi-threaded FFmpeg.wasm core — requires the cross-origin isolation (COOP/COEP)
-// set up by coi-serviceworker.js / server.py so SharedArrayBuffer is available.
-const FFMPEG_CORE_MT_BASE_URL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.10/dist/umd';
-const FFMPEG_CORE_MT_HASHES = {
-    'ffmpeg-core.js':        '91GpZ3Ow5AIa5wmICIKrQaOAmJPc0sPFNaeuZKtD1Dx7Xr/F8kfGZHM++VOj308v',
-    'ffmpeg-core.wasm':      'IXnr5PE2UFcQ5DvI5LyubPqmMF46EkyIMlbdn4CNQR1iQ8/2irEkyhDFnVDxv4f/',
-    'ffmpeg-core.worker.js': 'h19AXK35916sCbdJrzAeYw2kl/zEt4B6PTy94TTPup7kgO7r/7mwb43Orcu+xTW1',
+// Single-threaded FFmpeg.wasm core. A multi-threaded core-mt build was tried and
+// reverted: it hung indefinitely mid-transcode (stream mapping completed, but no
+// frame= progress ever printed) — a known category of issue with ffmpeg.wasm's
+// nested pthread-worker model across browsers. This core needs no COOP/COEP
+// cross-origin isolation, so it works with a plain static-file deployment.
+const FFMPEG_CORE_BASE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
+const FFMPEG_CORE_HASHES = {
+    'ffmpeg-core.js':   'sKfkiFtvUk+vexk+0EUhEh366190/4WpgUAsUvaxEfyg7+E1Zt5Y5hrsU808g8Q9',
+    'ffmpeg-core.wasm': 'U1VDhkPYrM3wTCT4/vjSpSsKqG/UjljYrYCI4hBSJ02svbCkxuCi6U6u/peg5vpW',
 };
 
 // Fetches a core file and verifies its SHA-384 digest against the pinned hash above
@@ -60,30 +62,25 @@ const FFMPEG_CORE_MT_HASHES = {
 // (not via a <script> tag), so this is the only way to get SRI-equivalent protection
 // against a tampered/compromised CDN response for it.
 async function fetchVerifiedBlobURL(fileName, mimeType) {
-    const url = `${FFMPEG_CORE_MT_BASE_URL}/${fileName}`;
+    const url = `${FFMPEG_CORE_BASE_URL}/${fileName}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
     const buf = await res.arrayBuffer();
     const digest = await crypto.subtle.digest('SHA-384', buf);
     const actualHash = btoa(String.fromCharCode(...new Uint8Array(digest)));
-    const expectedHash = FFMPEG_CORE_MT_HASHES[fileName];
+    const expectedHash = FFMPEG_CORE_HASHES[fileName];
     if (actualHash !== expectedHash) {
         throw new Error(`Integrity check failed for ${fileName} (expected ${expectedHash}, got ${actualHash})`);
     }
     return URL.createObjectURL(new Blob([buf], { type: mimeType }));
 }
 
-// Initialize FFmpeg WebAssembly Module (multi-threaded core, zero CORS restrictions)
+// Initialize FFmpeg WebAssembly Module (single-threaded core, zero CORS restrictions)
 async function initFFmpeg() {
     if (ffmpeg && ffmpeg.loaded) return true;
     try {
-        log('Loading WebAssembly core modules (FFmpeg.wasm multi-threaded core)...');
+        log('Loading WebAssembly core modules (FFmpeg.wasm core)...');
         statusMessage.textContent = 'Loading WebAssembly Core...';
-
-        if (typeof SharedArrayBuffer === 'undefined') {
-            log('⚠️ SharedArrayBuffer is disabled by your browser security policy.', true);
-            log('💡 Run "python3 server.py" in your terminal to enable Cross-Origin Isolation headers (COOP/COEP).', true);
-        }
 
         // Fail fast with an actionable message if either vendored bundle didn't load
         // (e.g. a transient CDN/edge propagation delay after deploy), instead of a
@@ -120,10 +117,9 @@ async function initFFmpeg() {
         await ffmpeg.load({
             coreURL: await fetchVerifiedBlobURL('ffmpeg-core.js', 'text/javascript'),
             wasmURL: await fetchVerifiedBlobURL('ffmpeg-core.wasm', 'application/wasm'),
-            workerURL: await fetchVerifiedBlobURL('ffmpeg-core.worker.js', 'text/javascript'),
         });
 
-        log('⚡ Multi-threaded WebAssembly core successfully loaded and ready!');
+        log('⚡ WebAssembly core successfully loaded and ready!');
         statusMessage.textContent = 'WebAssembly Engine Ready.';
         return true;
     } catch (err) {
@@ -252,8 +248,8 @@ async function probeAudioTracks(file) {
         await ffmpeg.writeFile(vfsName, await fetchFile(file));
 
         // Dual-capture: intercept both the FFmpeg.wasm logger callback (probeCapture)
-        // AND console.log/error — FFmpeg.wasm with log:true routes output to both paths,
-        // but with SharedArrayBuffer the delivery timing of each path differs.
+        // AND console.log/error — FFmpeg.wasm routes output to both paths, and the
+        // delivery timing of each can differ.
         probeCapture = [];
         const consoleCaptured = [];
         const origConsoleLog   = console.log;
@@ -269,8 +265,8 @@ async function probeAudioTracks(file) {
 
         try { await ffmpeg.exec(['-i', vfsName]); } catch (_) {}
 
-        // Wait 300 ms: with SharedArrayBuffer (COOP/COEP), logger postMessages from the
-        // Web Worker are macrotasks that can arrive well after run() rejects.
+        // Wait 300 ms: logger postMessages from the Web Worker are macrotasks that
+        // can arrive well after exec() rejects.
         await new Promise(r => setTimeout(r, 300));
 
         const loggerCaptured = [...probeCapture];

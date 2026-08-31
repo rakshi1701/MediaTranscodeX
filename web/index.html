@@ -5,18 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Media_TranscodeX Web - Desktop-Grade WebAssembly Converter</title>
     
-    <!-- Cross-Origin Isolation Service Worker for SharedArrayBuffer -->
-    <script src="coi-serviceworker.js"></script>
-
     <!-- Google Fonts -->
     <link rel="stylesheet" href="styles.css">
-    
-    <!-- FFmpeg.wasm Multi-Threaded Bundle, vendored locally (not loaded from a CDN).
+
+    <!-- FFmpeg.wasm Bundle, vendored locally (not loaded from a CDN).
          The library spins up its own internal Worker (vendor/814.ffmpeg.js) resolved
          relative to the script that loaded it; browsers hard-block `new Worker()` on a
          cross-origin URL regardless of CORS headers, so this file must be same-origin —
-         it cannot be loaded from unpkg like ffmpeg-core.js/.wasm/.worker.js are (those
-         are fetched manually in app.js and converted to same-origin blob: URLs instead). -->
+         it cannot be loaded from unpkg like ffmpeg-core.js/.wasm are (those are fetched
+         manually in app.js and converted to same-origin blob: URLs instead). -->
     <script src="vendor/ffmpeg.js"></script>
     <script src="vendor/ffmpeg-util.js"></script>
 </head>
