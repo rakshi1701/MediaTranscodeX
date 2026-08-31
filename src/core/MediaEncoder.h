@@ -46,6 +46,9 @@ public:
 
 private:
     bool writePacket(AVPacket* pkt, AVRational timeBase, AVStream* stream);
+    // Frees everything allocated so far during a failed init() and marks the
+    // encoder finished so the destructor won't attempt a second teardown.
+    bool abortInit();
 
     AVFormatContext* m_outputFormatCtx = nullptr;
 

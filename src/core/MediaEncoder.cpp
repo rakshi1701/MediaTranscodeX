@@ -28,7 +28,7 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t n
         const AVCodec* videoCodec = avcodec_find_encoder(options.video.codecId);
         if (!videoCodec) {
             std::cerr << "[MediaEncoder] Error: Video encoder not found." << std::endl;
-            return false;
+            return abortInit();
         }
 
         m_videoStream = avformat_new_stream(m_outputFormatCtx, nullptr);
@@ -49,7 +49,7 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t n
 
         if (avcodec_open2(m_videoCodecCtx, videoCodec, nullptr) < 0) {
             std::cerr << "[MediaEncoder] Error: Failed to open video codec." << std::endl;
-            return false;
+            return abortInit();
         }
 
         avcodec_parameters_from_context(m_videoStream->codecpar, m_videoCodecCtx);
@@ -79,13 +79,15 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t n
 
                 if (avcodec_open2(aState.codecCtx, audioCodec, nullptr) < 0) {
                     std::cerr << "[MediaEncoder] Error: Failed to open audio codec for track " << i << std::endl;
-                    return false;
+                    avcodec_free_context(&aState.codecCtx);
+                    return abortInit();
                 }
 
                 aState.fifo = av_audio_fifo_alloc(aState.codecCtx->sample_fmt, aState.codecCtx->channels, 1);
                 if (!aState.fifo) {
                     std::cerr << "[MediaEncoder] Error: Could not allocate AVAudioFifo for track " << i << std::endl;
-                    return false;
+                    avcodec_free_context(&aState.codecCtx);
+                    return abortInit();
                 }
 
                 avcodec_parameters_from_context(aState.stream->codecpar, aState.codecCtx);
@@ -115,7 +117,7 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t n
     if (!(m_outputFormatCtx->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&m_outputFormatCtx->pb, options.outputFilePath.c_str(), AVIO_FLAG_WRITE) < 0) {
             std::cerr << "[MediaEncoder] Error: Could not open file for writing." << std::endl;
-            return false;
+            return abortInit();
         }
     }
 
@@ -125,7 +127,7 @@ bool MediaEncoder::init(const TranscodeOptions& options, bool hasVideo, size_t n
 
     if (avformat_write_header(m_outputFormatCtx, nullptr) < 0) {
         std::cerr << "[MediaEncoder] Error: Could not write container header." << std::endl;
-        return false;
+        return abortInit();
     }
 
     m_headerWritten = true;
@@ -246,6 +248,26 @@ bool MediaEncoder::writePacket(AVPacket* pkt, AVRational timeBase, AVStream* str
     pkt->stream_index = stream->index;
 
     return av_interleaved_write_frame(m_outputFormatCtx, pkt) >= 0;
+}
+
+bool MediaEncoder::abortInit() {
+    if (m_videoCodecCtx) avcodec_free_context(&m_videoCodecCtx);
+    for (auto& aState : m_audioStreams) {
+        if (aState.fifo) av_audio_fifo_free(aState.fifo);
+        if (aState.codecCtx) avcodec_free_context(&aState.codecCtx);
+    }
+    m_audioStreams.clear();
+
+    if (m_outputFormatCtx) {
+        if (m_outputFormatCtx->pb && !(m_outputFormatCtx->oformat->flags & AVFMT_NOFILE)) {
+            avio_closep(&m_outputFormatCtx->pb);
+        }
+        avformat_free_context(m_outputFormatCtx);
+        m_outputFormatCtx = nullptr;
+    }
+
+    m_finished = true;
+    return false;
 }
 
 bool MediaEncoder::finish() {
