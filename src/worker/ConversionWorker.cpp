@@ -14,6 +14,7 @@ struct AudioPipeline {
     size_t outputTrackIndex = 0;
     Core::TrackSourceType sourceType = Core::TrackSourceType::Internal;
     int streamIndex = -1;
+    AVStream* internalStream = nullptr;
     std::shared_ptr<Core::MediaDemuxer> externalDemuxer;
     std::unique_ptr<Core::MediaDecoder> decoder;
     std::unique_ptr<Core::AudioResampler> resampler;
@@ -119,6 +120,7 @@ void ConversionWorker::process() {
             pipe.streamIndex = sel.sourceStreamIndex;
             if (pipe.streamIndex >= 0 && pipe.streamIndex < static_cast<int>(primaryDemuxer->getFormatContext()->nb_streams)) {
                 aStream = primaryDemuxer->getFormatContext()->streams[pipe.streamIndex];
+                pipe.internalStream = aStream;
             }
         } else {
             pipe.externalDemuxer = std::make_shared<Core::MediaDemuxer>();
@@ -184,6 +186,20 @@ void ConversionWorker::process() {
     double totalDuration = primaryDemuxer->getInfo().durationSeconds;
     int vIdx = primaryDemuxer->getInfo().videoStreamIndex;
 
+    // Audio-only outputs (mp3/wav/flac) have no video stream to drive progress off of,
+    // so track progress against the primary internal audio stream's pts instead.
+    AVStream* progressAudioStream = nullptr;
+    int progressAudioStreamIndex = -1;
+    if (!hasVideo) {
+        for (auto& aPipe : audioPipelines) {
+            if (aPipe.sourceType == Core::TrackSourceType::Internal && aPipe.internalStream) {
+                progressAudioStream = aPipe.internalStream;
+                progressAudioStreamIndex = aPipe.streamIndex;
+                break;
+            }
+        }
+    }
+
     Core::PacketPtr packet(av_packet_alloc());
 
     // 1. Demux & Process Primary Container
@@ -212,6 +228,12 @@ void ConversionWorker::process() {
                     encoder.encodeVideoFrame(frame);
                 }
             });
+        } else if (progressAudioStreamIndex >= 0 && packet->stream_index == progressAudioStreamIndex) {
+            if (totalDuration > 0 && packet->pts != AV_NOPTS_VALUE) {
+                double sec = packet->pts * av_q2d(progressAudioStream->time_base);
+                int progress = static_cast<int>((sec / totalDuration) * 100.0);
+                emit progressUpdated(std::min(100, std::max(0, progress)));
+            }
         }
         // Primary Internal Audio Streams
         for (auto& aPipe : audioPipelines) {
