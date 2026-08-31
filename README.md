@@ -1,6 +1,9 @@
 # 🎬 Media_TranscodeX
 
-A high-performance, standalone video/audio transoder, format converter, and multi-track stream multiplexing desktop application built using **Modern C++17**, **FFmpeg C APIs**, and **Qt 6**.
+A high-performance video/audio transcoder, format converter, and multi-track stream multiplexing tool, available as two independent implementations:
+
+- **Desktop app** (this document) — standalone **Modern C++17**, **FFmpeg C APIs**, and **Qt 6** application.
+- **Web app** (`web/`) — runs entirely client-side in the browser via **ffmpeg.wasm**, no install or server-side processing required. See the "🌐 Web Version (Browser-Based)" section below.
 
 Media_TranscodeX provides low-level raw frame decoding, hardware-accelerated color/resolution scaling, sample-accurate audio frame buffering (`AVAudioFifo`), interactive track stream management, and non-blocking asynchronous multithreading.
 
@@ -54,31 +57,37 @@ The application is engineered using a clean, decoupled 3-tier system architectur
 
 ```text
 Media_TranscodeX/
-├── CMakeLists.txt               # Cross-platform CMake 3.16+ configuration file
+├── CMakeLists.txt               # Cross-platform CMake 3.16+ configuration file (desktop app)
 ├── README.md                    # Project documentation & architecture guide
 ├── Project_plan.md              # Feature development roadmap & sprint history
 ├── config.txt                   # Workspace configuration settings
-└── src/
-    ├── core/                    # Pure C++ FFmpeg Processing Engine (No Qt dependencies)
-    │   ├── RAIIWrappers.h       # C++17 smart pointer deleters (std::unique_ptr) for FFmpeg structs
-    │   ├── TranscodeOptions.h   # Transcode options struct & container codec auto-configuration
-    │   ├── MediaDemuxer.h       # Header for container demuxing & stream inspection
-    │   ├── MediaDemuxer.cpp     # Demuxer implementation (avformat_open_input, avfind_best_stream)
-    │   ├── MediaDecoder.h       # Header for video/audio decoding
-    │   ├── MediaDecoder.cpp     # Decoder implementation (avcodec_send_packet, avcodec_receive_frame)
-    │   ├── MediaEncoder.h       # Header for encoding, container muxing & AVAudioFifo buffering
-    │   ├── MediaEncoder.cpp     # Encoder implementation (avformat_write_header, AVAudioFifo, av_interleaved_write_frame)
-    │   ├── AudioResampler.h     # Header for audio resampling & format conversion
-    │   ├── AudioResampler.cpp   # Audio resampler implementation (SwrContext, swr_convert)
-    │   ├── FrameScaler.h        # Header for video frame scaling & color space conversion
-    │   └── FrameScaler.cpp      # Frame scaler implementation (SwsContext, sws_scale)
-    ├── worker/                  # Asynchronous Multithreaded Execution Layer
-    │   ├── ConversionWorker.h   # QThread worker header emitting progress & status signals
-    │   └── ConversionWorker.cpp # Multi-track demux, decode, scale, resample & mux pipeline
-    └── gui/                     # Desktop User Interface Layer (Qt 6 Widget Framework)
-        ├── main.cpp             # Application entry point & Qt main event loop
-        ├── MainWindow.h         # Main desktop dashboard header & UI layout slots
-        └── MainWindow.cpp       # Desktop UI implementation, track manager tree & transcode controls
+├── server.py                    # Local dev server for the web app (CORS-enabled static file server)
+├── src/                         # Desktop app (Qt 6 + FFmpeg C API)
+│   ├── core/                    # Pure C++ FFmpeg Processing Engine (No Qt dependencies)
+│   │   ├── RAIIWrappers.h       # C++17 smart pointer deleters (std::unique_ptr) for FFmpeg structs
+│   │   ├── TranscodeOptions.h   # Transcode options struct & container codec auto-configuration
+│   │   ├── MediaDemuxer.h       # Header for container demuxing & stream inspection
+│   │   ├── MediaDemuxer.cpp     # Demuxer implementation (avformat_open_input, avfind_best_stream)
+│   │   ├── MediaDecoder.h       # Header for video/audio decoding
+│   │   ├── MediaDecoder.cpp     # Decoder implementation (avcodec_send_packet, avcodec_receive_frame)
+│   │   ├── MediaEncoder.h       # Header for encoding, container muxing & AVAudioFifo buffering
+│   │   ├── MediaEncoder.cpp     # Encoder implementation (avformat_write_header, AVAudioFifo, av_interleaved_write_frame)
+│   │   ├── AudioResampler.h     # Header for audio resampling & format conversion
+│   │   ├── AudioResampler.cpp   # Audio resampler implementation (SwrContext, swr_convert)
+│   │   ├── FrameScaler.h        # Header for video frame scaling & color space conversion
+│   │   └── FrameScaler.cpp      # Frame scaler implementation (SwsContext, sws_scale)
+│   ├── worker/                  # Asynchronous Multithreaded Execution Layer
+│   │   ├── ConversionWorker.h   # QThread worker header emitting progress & status signals
+│   │   └── ConversionWorker.cpp # Multi-track demux, decode, scale, resample & mux pipeline
+│   └── gui/                     # Desktop User Interface Layer (Qt 6 Widget Framework)
+│       ├── main.cpp             # Application entry point & Qt main event loop
+│       ├── MainWindow.h         # Main desktop dashboard header & UI layout slots
+│       └── MainWindow.cpp       # Desktop UI implementation, track manager tree & transcode controls
+└── web/                         # Web app (vanilla JS + ffmpeg.wasm, no build step)
+    ├── index.html               # Page layout & vendored FFmpeg.wasm <script> includes
+    ├── app.js                   # FFmpeg.wasm engine, transcode pipeline & UI wiring
+    ├── styles.css               # Styling
+    └── vendor/                  # Locally-hosted FFmpeg.wasm wrapper libraries (see below)
 ```
 
 ---
@@ -169,6 +178,34 @@ cmake --build . -j$(nproc)
 ```bash
 ./Media_TranscodeX
 ```
+
+---
+
+## 🌐 Web Version (Browser-Based)
+
+The `web/` directory contains a completely independent implementation of the same converter, running entirely client-side in the browser via [ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg.wasm) — no install, no server-side processing, and your media never leaves the browser. Deployed live via GitHub Pages: **https://rakshi1701.github.io/MediaTranscodeX/**
+
+### Features
+Mirrors the desktop app's core feature set: container/format conversion, resolution/bitrate/encoding-speed control, internal audio track selection, external audio/subtitle track injection with start-offset delay and duration trimming, and a live progress bar + log console.
+
+### Architecture Notes
+- **FFmpeg.wasm engine**: uses the single-threaded `@ffmpeg/core` build. A multi-threaded `core-mt` build was evaluated but reverted — it hung indefinitely mid-transcode in testing, a known issue with ffmpeg.wasm's nested pthread-worker model across browsers.
+- **`web/vendor/`**: the `@ffmpeg/ffmpeg` and `@ffmpeg/util` wrapper libraries are vendored locally rather than loaded from a CDN. `@ffmpeg/ffmpeg` spins up its own internal Worker resolved relative to wherever its own script was loaded from, and browsers hard-block `new Worker()` on a cross-origin URL — vendoring keeps everything same-origin.
+- **Integrity-verified core loading**: the actual `ffmpeg-core.js` / `ffmpeg-core.wasm` files are still fetched from a CDN at runtime (they're large, versioned binaries, not vendored), but `app.js` computes a SHA-384 digest of each and checks it against a pinned hash before use — CDN-tamper protection equivalent to Subresource Integrity, for files that can't use the `<script integrity>` attribute directly since they're loaded dynamically.
+- **No cross-origin isolation required**: since the core is single-threaded, the app needs no `SharedArrayBuffer` / COOP / COEP setup — it works on any static file host, including GitHub Pages, with zero special server configuration.
+
+### Run Locally
+
+```bash
+# From the repository root
+python3 server.py
+
+# Then open in your browser
+http://localhost:8080
+```
+
+### Deployment
+Pushing to the `web-version` or `Main` branch automatically deploys `web/` to GitHub Pages via `.github/workflows/deploy_web.yml`.
 
 ---
 
