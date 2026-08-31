@@ -237,6 +237,7 @@ void ConversionWorker::process() {
 
     // 2. Demux & Process External Audio Tracks
     for (auto& aPipe : audioPipelines) {
+        if (m_cancelRequested) break;
         if (aPipe.sourceType == Core::TrackSourceType::External && aPipe.externalDemuxer) {
             emit statusMessage("Processing external audio track...");
 
@@ -252,7 +253,7 @@ void ConversionWorker::process() {
 
             Core::PacketPtr extPkt(av_packet_alloc());
             size_t outIdx = aPipe.outputTrackIndex;
-            while (!durationReached && av_read_frame(aPipe.externalDemuxer->getFormatContext(), extPkt.get()) >= 0) {
+            while (!durationReached && !m_cancelRequested && av_read_frame(aPipe.externalDemuxer->getFormatContext(), extPkt.get()) >= 0) {
                 if (extPkt->stream_index == aPipe.streamIndex) {
                     aPipe.decoder->decodePacket(extPkt.get(), [&](AVFrame* frame) {
                         if (durationReached) return;
@@ -273,16 +274,23 @@ void ConversionWorker::process() {
 
     // 3. Demux & Process External Subtitle Tracks
     for (auto& sPipe : subPipelines) {
+        if (m_cancelRequested) break;
         if (sPipe.sourceType == Core::TrackSourceType::External && sPipe.externalDemuxer) {
             emit statusMessage("Multiplexing external subtitle track...");
             Core::PacketPtr extPkt(av_packet_alloc());
-            while (av_read_frame(sPipe.externalDemuxer->getFormatContext(), extPkt.get()) >= 0) {
+            while (!m_cancelRequested && av_read_frame(sPipe.externalDemuxer->getFormatContext(), extPkt.get()) >= 0) {
                 if (extPkt->stream_index == sPipe.streamIndex) {
                     encoder.writeSubtitlePacket(sPipe.outputTrackIndex, extPkt.get(), sPipe.timeBase);
                 }
                 av_packet_unref(extPkt.get());
             }
         }
+    }
+
+    if (m_cancelRequested) {
+        emit statusMessage("Cancelled by user.");
+        emit conversionFinished(false, "Transcoding cancelled.");
+        return;
     }
 
     emit statusMessage("Finalizing output container...");
