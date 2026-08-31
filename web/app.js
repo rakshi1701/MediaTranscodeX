@@ -20,6 +20,7 @@ const customResGroup = document.getElementById('customResGroup');
 const widthInput = document.getElementById('widthInput');
 const heightInput = document.getElementById('heightInput');
 const bitrateSelect = document.getElementById('bitrateSelect');
+const presetSelect = document.getElementById('presetSelect');
 const audioBitrateSelect = document.getElementById('audioBitrateSelect');
 const muteAudioCheck = document.getElementById('muteAudioCheck');
 const trackList = document.getElementById('trackList');
@@ -511,7 +512,7 @@ startBtn.addEventListener('click', async () => {
         } else {
             // Video Codec per Container — Fix: WebM uses VP9 not VP8
             if (['mp4', 'mkv', 'mov', 'ts', 'flv', 'avi'].includes(targetExt)) {
-                args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p');
+                args.push('-c:v', 'libx264', '-preset', presetSelect.value, '-pix_fmt', 'yuv420p');
                 args.push('-b:v', bitrateSelect.value);
             } else if (targetExt === 'webm') {
                 args.push('-c:v', 'libvpx-vp9', '-b:v', bitrateSelect.value);
