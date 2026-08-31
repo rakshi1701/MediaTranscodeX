@@ -11,9 +11,12 @@
     <!-- Google Fonts -->
     <link rel="stylesheet" href="styles.css">
     
-    <!-- FFmpeg.wasm Standalone Bundle -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"
-            integrity="sha384-m5or9sW5FUT2WQbj3UthGceVpwo9zSgHKdCugYKHl19lyXPvwO/oQcmq8Fw0FfaA"
+    <!-- FFmpeg.wasm Multi-Threaded Bundle (requires the COOP/COEP isolation set up by coi-serviceworker.js) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/umd/ffmpeg.js"
+            integrity="sha384-6gtICseWoSfROfflbGSkg1kwPTH+2SxMvyn0e3THJbNoyPxx5tzNk4EXfLIHD2iD"
+            crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.2/dist/umd/index.js"
+            integrity="sha384-pfTXXbzgpQ+siOKPe/NshFjDhSsvj8VTnEHnKGQJu7RKTniWBCB9E19NsmNSa21/"
             crossorigin="anonymous"></script>
 </head>
 <body>

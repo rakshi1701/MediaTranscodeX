@@ -46,11 +46,38 @@ function log(msg, isError = false) {
     terminalLog.scrollTop = terminalLog.scrollHeight;
 }
 
-// Initialize FFmpeg WebAssembly Module (Zero CORS restrictions)
+// Multi-threaded FFmpeg.wasm core — requires the cross-origin isolation (COOP/COEP)
+// set up by coi-serviceworker.js / server.py so SharedArrayBuffer is available.
+const FFMPEG_CORE_MT_BASE_URL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.10/dist/umd';
+const FFMPEG_CORE_MT_HASHES = {
+    'ffmpeg-core.js':        '91GpZ3Ow5AIa5wmICIKrQaOAmJPc0sPFNaeuZKtD1Dx7Xr/F8kfGZHM++VOj308v',
+    'ffmpeg-core.wasm':      'IXnr5PE2UFcQ5DvI5LyubPqmMF46EkyIMlbdn4CNQR1iQ8/2irEkyhDFnVDxv4f/',
+    'ffmpeg-core.worker.js': 'h19AXK35916sCbdJrzAeYw2kl/zEt4B6PTy94TTPup7kgO7r/7mwb43Orcu+xTW1',
+};
+
+// Fetches a core file and verifies its SHA-384 digest against the pinned hash above
+// before handing it back as a blob: URL. The core is loaded dynamically at runtime
+// (not via a <script> tag), so this is the only way to get SRI-equivalent protection
+// against a tampered/compromised CDN response for it.
+async function fetchVerifiedBlobURL(fileName, mimeType) {
+    const url = `${FFMPEG_CORE_MT_BASE_URL}/${fileName}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-384', buf);
+    const actualHash = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    const expectedHash = FFMPEG_CORE_MT_HASHES[fileName];
+    if (actualHash !== expectedHash) {
+        throw new Error(`Integrity check failed for ${fileName} (expected ${expectedHash}, got ${actualHash})`);
+    }
+    return URL.createObjectURL(new Blob([buf], { type: mimeType }));
+}
+
+// Initialize FFmpeg WebAssembly Module (multi-threaded core, zero CORS restrictions)
 async function initFFmpeg() {
-    if (ffmpeg && ffmpeg.isLoaded()) return true;
+    if (ffmpeg && ffmpeg.loaded) return true;
     try {
-        log('Loading WebAssembly core modules (FFmpeg.wasm v0.11.6)...');
+        log('Loading WebAssembly core modules (FFmpeg.wasm multi-threaded core)...');
         statusMessage.textContent = 'Loading WebAssembly Core...';
 
         if (typeof SharedArrayBuffer === 'undefined') {
@@ -58,32 +85,35 @@ async function initFFmpeg() {
             log('💡 Run "python3 server.py" in your terminal to enable Cross-Origin Isolation headers (COOP/COEP).', true);
         }
 
-        const { createFFmpeg } = window.FFmpeg || FFmpeg;
-        ffmpeg = createFFmpeg({
-            corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
-            log: true,
-            logger: m => {
-                if (!m || !m.message) return;
-                if (probeCapture !== null) {
-                    // During probe: capture every line directly here, split on newlines
-                    m.message.split('\n').forEach(l => probeCapture.push(l));
-                } else {
-                    log(m.message);
-                }
-            },
-            progress: p => {
-                if (p && typeof p.ratio === 'number') {
-                    const pct = Math.min(100, Math.max(0, Math.round(p.ratio * 100)));
-                    progressBarFill.style.width = `${pct}%`;
-                    progressText.textContent = `${pct}%`;
-                    statusMessage.textContent = `Transcoding in progress... (${pct}%)`;
-                }
+        const { FFmpeg } = window.FFmpegWASM;
+        ffmpeg = new FFmpeg();
+
+        ffmpeg.on('log', ({ message }) => {
+            if (!message) return;
+            if (probeCapture !== null) {
+                // During probe: capture every line directly here, split on newlines
+                message.split('\n').forEach(l => probeCapture.push(l));
+            } else {
+                log(message);
             }
         });
 
-        await ffmpeg.load();
+        ffmpeg.on('progress', ({ progress }) => {
+            if (typeof progress === 'number') {
+                const pct = Math.min(100, Math.max(0, Math.round(progress * 100)));
+                progressBarFill.style.width = `${pct}%`;
+                progressText.textContent = `${pct}%`;
+                statusMessage.textContent = `Transcoding in progress... (${pct}%)`;
+            }
+        });
 
-        log('⚡ WebAssembly core successfully loaded and ready!');
+        await ffmpeg.load({
+            coreURL: await fetchVerifiedBlobURL('ffmpeg-core.js', 'text/javascript'),
+            wasmURL: await fetchVerifiedBlobURL('ffmpeg-core.wasm', 'application/wasm'),
+            workerURL: await fetchVerifiedBlobURL('ffmpeg-core.worker.js', 'text/javascript'),
+        });
+
+        log('⚡ Multi-threaded WebAssembly core successfully loaded and ready!');
         statusMessage.textContent = 'WebAssembly Engine Ready.';
         return true;
     } catch (err) {
@@ -188,7 +218,7 @@ async function handleFileSelect(file) {
 
     // Load FFmpeg then probe for audio tracks (runs in background, updates track list when done)
     initFFmpeg().then(async (loaded) => {
-        if (!loaded || !ffmpeg || !ffmpeg.isLoaded()) return;
+        if (!loaded || !ffmpeg || !ffmpeg.loaded) return;
         // Only probe the file that was selected (guard against fast file switching)
         if (sourceFile !== file) return;
         sourceAudioTracks = await probeAudioTracks(file);
@@ -206,10 +236,10 @@ function renderTreeItem(key, val) {
 // Probe source file for audio streams using ffmpeg -i (exits non-zero intentionally)
 async function probeAudioTracks(file) {
     try {
-        const { fetchFile } = window.FFmpeg || FFmpeg;
+        const { fetchFile } = window.FFmpegUtil;
         const ext = file.name.split('.').pop() || 'mp4';
         const vfsName = `probe_tmp.${ext}`;
-        ffmpeg.FS('writeFile', vfsName, await fetchFile(file));
+        await ffmpeg.writeFile(vfsName, await fetchFile(file));
 
         // Dual-capture: intercept both the FFmpeg.wasm logger callback (probeCapture)
         // AND console.log/error — FFmpeg.wasm with log:true routes output to both paths,
@@ -227,7 +257,7 @@ async function probeAudioTracks(file) {
         console.error = intercept;
         console.warn  = intercept;
 
-        try { await ffmpeg.run('-i', vfsName); } catch (_) {}
+        try { await ffmpeg.exec(['-i', vfsName]); } catch (_) {}
 
         // Wait 300 ms: with SharedArrayBuffer (COOP/COEP), logger postMessages from the
         // Web Worker are macrotasks that can arrive well after run() rejects.
@@ -241,7 +271,7 @@ async function probeAudioTracks(file) {
         console.error = origConsoleError;
         console.warn  = origConsoleWarn;
 
-        try { ffmpeg.FS('unlink', vfsName); } catch (_) {}
+        try { await ffmpeg.deleteFile(vfsName); } catch (_) {}
 
         // Merge both capture paths; split each message on '\n'; deduplicate
         const seen = new Set();
@@ -450,13 +480,13 @@ startBtn.addEventListener('click', async () => {
     statusMessage.textContent = 'Preparing virtual filesystem and loading media...';
 
     try {
-        const { fetchFile } = window.FFmpeg || FFmpeg;
+        const { fetchFile } = window.FFmpegUtil;
 
         // 1. Write Primary Source File to FFmpeg VFS with isolated name
         const inputExt = sourceFile.name.split('.').pop() || 'mp4';
         const inputVfsName = `vfs_input_source.${inputExt}`;
         log(`Writing ${sourceFile.name} to WebAssembly memory...`);
-        ffmpeg.FS('writeFile', inputVfsName, await fetchFile(sourceFile));
+        await ffmpeg.writeFile(inputVfsName, await fetchFile(sourceFile));
 
         // 2. Prepare Output VFS Name & Options
         const targetExt = formatSelect.value;
@@ -478,7 +508,7 @@ startBtn.addEventListener('click', async () => {
             const extAudio = externalAudio[i];
             const extAudioExt = extAudio.file.name.split('.').pop() || 'mp3';
             const extAudioVfsName = `vfs_ext_audio_${i}.${extAudioExt}`;
-            ffmpeg.FS('writeFile', extAudioVfsName, await fetchFile(extAudio.file));
+            await ffmpeg.writeFile(extAudioVfsName, await fetchFile(extAudio.file));
             if (extAudio.maxDurationSec > 0) args.push('-t', extAudio.maxDurationSec.toFixed(3));
             args.push('-i', extAudioVfsName);
             audioInputIndices.push(currentInputIndex);
@@ -491,7 +521,7 @@ startBtn.addEventListener('click', async () => {
             const extSub = externalSubtitles[j];
             const extSubExt = extSub.file.name.split('.').pop() || 'srt';
             const extSubVfsName = `vfs_ext_sub_${j}.${extSubExt}`;
-            ffmpeg.FS('writeFile', extSubVfsName, await fetchFile(extSub.file));
+            await ffmpeg.writeFile(extSubVfsName, await fetchFile(extSub.file));
             args.push('-i', extSubVfsName);
             subInputIndices.push(currentInputIndex);
             currentInputIndex++;
@@ -601,11 +631,11 @@ startBtn.addEventListener('click', async () => {
         statusMessage.textContent = 'Transcoding via WebAssembly engine...';
 
         // Execute FFmpeg Transcode Command
-        await ffmpeg.run(...args);
+        await ffmpeg.exec(args);
 
         // 7. Read Converted Output File from VFS
         log('Transcoding complete! Reading converted file from WebAssembly memory...');
-        const data = ffmpeg.FS('readFile', outputVfsName);
+        const data = await ffmpeg.readFile(outputVfsName);
         const mimeTypes = {
             mp4: 'video/mp4', mkv: 'video/x-matroska', webm: 'video/webm',
             avi: 'video/x-msvideo', mov: 'video/quicktime', flv: 'video/x-flv',
@@ -636,8 +666,8 @@ startBtn.addEventListener('click', async () => {
 
         // Cleanup VFS
         try {
-            ffmpeg.FS('unlink', inputVfsName);
-            ffmpeg.FS('unlink', outputVfsName);
+            await ffmpeg.deleteFile(inputVfsName);
+            await ffmpeg.deleteFile(outputVfsName);
         } catch (e) {}
 
     } catch (err) {
@@ -651,7 +681,7 @@ startBtn.addEventListener('click', async () => {
 
 // Cancel transcoding — terminates the FFmpeg WebWorker; engine reloads on next transcode
 cancelBtn.addEventListener('click', () => {
-    try { ffmpeg.exit(); } catch (e) {}
+    try { ffmpeg.terminate(); } catch (e) {}
     ffmpeg = null;
     startBtn.disabled = false;
     cancelBtn.style.display = 'none';
